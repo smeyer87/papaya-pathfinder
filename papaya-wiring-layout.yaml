@@ -1,0 +1,328 @@
+# =============================================================================
+# Papaya Pathfinder — System Wiring Layout
+# =============================================================================
+# This file describes the FULL electrical system, not just the custom PCB:
+# battery, protection/switching, terminal blocks, off-board modules (ESP32,
+# motor drivers, motors, servos, ELRS receiver, UBECs...) and the custom board
+# itself. The goal is a single source of truth that can drive:
+#   - a KiCad schematic (pathfinder/kicad/papaya-pcb/papaya-pcb.kicad_sch)
+#   - a KiCad PCB layout (pathfinder/kicad/papaya-pcb/papaya-pcb.kicad_pcb)
+#   - build/wiring documentation
+#
+# STRUCTURE
+#   system      -- overall metadata
+#   components  -- every physical part in the system (see componentType below)
+#   connections -- every wire/trace between two connection points
+#
+# componentType values:
+#   battery       - power source (e.g. LiPo pack)
+#   fuse          - inline protection device
+#   switch        - power switch / disconnect
+#   terminalBlock - screw/terminal block used to distribute or join wires
+#   offBoard      - any module NOT on the custom PCB (ESP32, motor driver,
+#                   motor, servo, UBEC, receiver, antenna, connector, etc.)
+#                   Use ONE component entry per physical part (e.g.
+#                   bts7960-1, bts7960-2, motor-lf, motor-rf, servo-1...),
+#                   not one entry per part type.
+#   board         - the custom PCB itself (pathfinder/kicad/papaya-pcb).
+#                   Once real KiCad connectors/designators exist, name each
+#                   connectionPoint after its KiCad ref+pin (e.g. "J1.1",
+#                   "J2.3") so this file can be cross-checked against the
+#                   .kicad_sch netlist.
+#
+# Each component lists its own `connectionPoints` — the specific pins,
+# terminals, pads, or screw positions that can be wired to. `connections`
+# then references those points by (componentId, pointId) pairs.
+#
+# CONNECTION MEDIUM (wire vs. PCB trace)
+#   Every entry in `connections` has a `medium` describing HOW the two
+#   points are physically joined:
+#     kind: wire  - a physical wire (off-board, or terminal-block-to-board).
+#                   Fields: color, gauge, lengthMm.
+#     kind: trace - a copper trace on the custom PCB. Only valid when BOTH
+#                   endpoints are on the `board` component. Fields: layer
+#                   (e.g. "F.Cu"), widthMm. There's no "color" for a trace —
+#                   this is where the abstraction shifts from a physical
+#                   wire you cut/crimp to a route KiCad draws for you.
+#   You don't need to pick trace-vs-wire yourself for on-board routing
+#   beyond marking it `kind: trace`; once the schematic/PCB exists, the
+#   actual copper path is whatever KiCad routes, not something you specify
+#   here — this file just records the intended net.
+#
+# BONDED GROUPS (bus bars / ganged terminal positions)
+#   Some components (most often a terminalBlock used as a distribution
+#   bus) have several connectionPoints permanently tied together with a
+#   hardwire jumper/bus bar, so they're all one electrical net. Instead of
+#   writing a chain of jumper `connections`, list the tied points once in
+#   that component's optional `bondedGroups`. Individual wires (e.g. the
+#   feed-in, or the leg to one motor) still attach to a single point within
+#   the group via a normal `connections` entry — the group just says "these
+#   points are already the same node."
+#
+# This is a STARTING STRUCTURE with one illustrative example per
+# componentType. Replace/expand the example entries with real data from your
+# worksheets; the shape (keys/fields) is what matters, not the sample values.
+# =============================================================================
+
+system:
+  name: "Papaya Pathfinder"
+  description: "Full-size Papaya Pathfinder rover — complete electrical system, on-board and off-board."
+  notes: ""
+
+# -----------------------------------------------------------------------------
+# COMPONENTS
+# -----------------------------------------------------------------------------
+components:
+
+  # --- battery -----------------------------------------------------------
+  - id: battery-main
+    componentType: battery
+    name: "Main LiPo Battery"
+    model: "LiPo 3S"
+    notes: ""
+    connectionPoints:
+      - id: POS
+        label: "Positive (+)"
+      - id: NEG
+        label: "Negative (-)"
+
+  # --- fuse ----------------------------------------------------------------
+  - id: fuse-main
+    componentType: fuse
+    name: "Main Power Fuse"
+    model: ""          # e.g. "10A blade fuse"
+    notes: ""
+    connectionPoints:
+      - id: IN
+        label: "Input (from battery)"
+      - id: OUT
+        label: "Output (to switch/distribution)"
+
+  # --- switch --------------------------------------------------------------
+  - id: switch-main
+    componentType: switch
+    name: "Main Power Switch"
+    model: ""
+    notes: ""
+    connectionPoints:
+      - id: IN
+        label: "Input"
+      - id: OUT
+        label: "Output"
+
+  # --- terminal block --------------------------------------------------------
+  # Terminal blocks expose a grid of named positions, e.g. row A / row B,
+  # numbered left-to-right. List every physical position you have available,
+  # even if not all are used yet.
+  - id: tb-power-dist
+    componentType: terminalBlock
+    name: "Power Distribution Terminal Block"
+    model: ""           # e.g. "5-position screw terminal block"
+    notes: ""
+    connectionPoints:
+      - id: A1
+        row: A
+        number: 1
+        label: ""       # e.g. "Battery +"
+      - id: A2
+        row: A
+        number: 2
+        label: ""
+      - id: B1
+        row: B
+        number: 1
+        label: ""       # e.g. "Battery -"
+      - id: B2
+        row: B
+        number: 2
+        label: ""
+
+  # --- terminal block used as a distribution bus (bonded/ganged) -------------
+  # Example modeled on a marine 8+8 terminal bus with hardwire jumpers
+  # ganging groups of positions onto a single net, so one feed powers
+  # several motors on the same side at once. (Odd motor # = right side,
+  # even motor # = left side, per the rover's own numbering convention.)
+  - id: tb-motor-bus
+    componentType: terminalBlock
+    name: "Motor Power Distribution Bus"
+    model: ""            # e.g. "marine 8+8 position terminal bus"
+    notes: "Positions within a bondedGroup are tied together by a physical hardwire jumper, not a discrete wire."
+    connectionPoints:
+      - { id: A1, row: A, number: 1, label: "Right power - IN (from distribution)" }
+      - { id: A3, row: A, number: 3, label: "Right power - to Motor 1" }
+      - { id: A5, row: A, number: 5, label: "Right power - to Motor 3" }
+      - { id: A7, row: A, number: 7, label: "Right power - to Motor 5" }
+      - { id: A2, row: A, number: 2, label: "Left power - IN (from distribution)" }
+      - { id: A4, row: A, number: 4, label: "Left power - to Motor 2" }
+      - { id: A6, row: A, number: 6, label: "Left power - to Motor 4" }
+      - { id: A8, row: A, number: 8, label: "Left power - to Motor 6" }
+      - { id: B1, row: B, number: 1, label: "Right return - IN" }
+      - { id: B3, row: B, number: 3, label: "Right return - from Motor 1" }
+      - { id: B5, row: B, number: 5, label: "Right return - from Motor 3" }
+      - { id: B7, row: B, number: 7, label: "Right return - from Motor 5" }
+      - { id: B2, row: B, number: 2, label: "Left return - IN" }
+      - { id: B4, row: B, number: 4, label: "Left return - from Motor 2" }
+      - { id: B6, row: B, number: 6, label: "Left return - from Motor 4" }
+      - { id: B8, row: B, number: 8, label: "Left return - from Motor 6" }
+    bondedGroups:
+      - id: right-power
+        points: [A1, A3, A5, A7]
+        notes: "Hardwire jumper bar across these 4 positions"
+      - id: left-power
+        points: [A2, A4, A6, A8]
+        notes: "Hardwire jumper bar across these 4 positions"
+      - id: right-return
+        points: [B1, B3, B5, B7]
+        notes: "Hardwire jumper bar across these 4 positions"
+      - id: left-return
+        points: [B2, B4, B6, B8]
+        notes: "Hardwire jumper bar across these 4 positions"
+
+  # --- off-board component ----------------------------------------------------
+  # Anything not physically on the custom PCB: microcontroller, motor
+  # drivers, motors, servos, UBECs, receiver, etc. Add one entry per part.
+  - id: esp32
+    componentType: offBoard
+    name: "ESP32-S3"
+    model: "ESP32-WROOM/S3"
+    notes: ""
+    connectionPoints:
+      - id: GPIO7
+        label: "Servo #2 signal"
+      - id: GPIO10
+        label: "BTS #2 - pin 1"
+      - id: GPIO11
+        label: "BTS #2 - pin 2"
+      - id: GPIO12
+        label: "BTS #1 - pin 1"
+      - id: GPIO13
+        label: "BTS #1 - pin 2"
+      - id: GPIO21
+        label: "ELRS RX (white wire)"
+      - id: GPIO38
+        label: "Servo #4 signal"
+      - id: GPIO41
+        label: "Servo #3 signal"
+      - id: GPIO42
+        label: "Servo #1 signal"
+      - id: GPIO47
+        label: "ELRS TX (green wire)"
+      - id: 5V_IN
+        label: "5V power in"
+      - id: GND_1
+        label: "Ground (near 5V IN)"
+      - id: GND_2
+        label: "Ground (near TX)"
+
+  # --- board (custom PCB) -----------------------------------------------------
+  # The physical board being designed in KiCad. Its connection points are
+  # the headers/pads/screw-terminals exposed on the board edge, which is
+  # what off-board components and terminal blocks wire into.
+  - id: board-main
+    componentType: board
+    name: "Papaya Pathfinder PCB"
+    widthMm: 70
+    lengthMm: 90
+    kicadProject: "pathfinder/kicad/papaya-pcb"
+    notes: ""
+    connectionPoints:
+      # id = KiCad connector reference designator + pin (e.g. "J1.1"),
+      # once real connectors/designators exist in the .kicad_sch.
+      - id: J1.1
+        label: ""       # e.g. "5V IN"
+      - id: J1.2
+        label: ""       # e.g. "GND"
+      # Example: a socket header the ESP32 module plugs into, plus a
+      # header pin that routes on (via internal trace) to a servo
+      # connector — illustrates the offBoard-module -> board-connector
+      # -> board-connector pattern discussed for the ESP32.
+      - id: J_ESP32.7
+        label: "ESP32 GPIO7 (socket pin)"
+      - id: J_SERVO2.SIG
+        label: "Servo #2 signal pin"
+
+# -----------------------------------------------------------------------------
+# CONNECTIONS
+# -----------------------------------------------------------------------------
+# One entry per physical wire or PCB trace. `from`/`to` reference a
+# component id + one of its connectionPoints ids. Order doesn't imply
+# direction unless noted. See "CONNECTION MEDIUM" above for `medium.kind`.
+connections:
+
+  - id: conn-001
+    from: { component: battery-main, point: POS }
+    to: { component: fuse-main, point: IN }
+    medium:
+      kind: wire
+      color: red
+      gauge: ""         # e.g. "14 AWG"
+      lengthMm: null
+    notes: ""
+
+  - id: conn-002
+    from: { component: fuse-main, point: OUT }
+    to: { component: switch-main, point: IN }
+    medium:
+      kind: wire
+      color: red
+      gauge: ""
+      lengthMm: null
+    notes: ""
+
+  - id: conn-003
+    from: { component: switch-main, point: OUT }
+    to: { component: tb-power-dist, point: A1 }
+    medium:
+      kind: wire
+      color: red
+      gauge: ""
+      lengthMm: null
+    notes: ""
+
+  - id: conn-004
+    from: { component: tb-power-dist, point: A1 }
+    to: { component: board-main, point: J1.1 }
+    medium:
+      kind: wire
+      color: red
+      gauge: ""
+      lengthMm: null
+    notes: ""
+
+  # --- example: off-board module -> board connector (still a wire; this
+  # is the ESP32 module's pin mating into the board's socket header) ---
+  - id: conn-005
+    from: { component: esp32, point: GPIO7 }
+    to: { component: board-main, point: J_ESP32.7 }
+    medium:
+      kind: wire
+      color: ""
+      gauge: ""
+      lengthMm: null
+    notes: "ESP32 module plugged into on-board socket header"
+
+  # --- example: board-internal PCB trace (both endpoints on board-main) ---
+  - id: conn-006
+    from: { component: board-main, point: J_ESP32.7 }
+    to: { component: board-main, point: J_SERVO2.SIG }
+    medium:
+      kind: trace
+      layer: "F.Cu"
+      widthMm: 0.5
+    notes: "Routes ESP32 GPIO7 to the servo #2 header; actual copper path is whatever KiCad routes"
+
+  # --- example: wires landing on a bonded/ganged terminal bus ---
+  # Each wire attaches to ONE position; tb-motor-bus.bondedGroups already
+  # ties that position to the other 3 in its group, so a single feed-in
+  # wire here effectively reaches every motor leg in the group.
+  - id: conn-007
+    from: { component: switch-main, point: OUT }
+    to: { component: tb-motor-bus, point: A1 }
+    medium:
+      kind: wire
+      color: red
+      gauge: ""
+      lengthMm: null
+    notes: "Right-side motor power feed-in"
+    # A3/A5/A7 (also bonded to A1) would each get their own conn-00N wire
+    # out to Motor 1 / Motor 3 / Motor 5's actual power terminal.
