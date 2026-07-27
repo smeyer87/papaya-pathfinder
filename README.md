@@ -1,166 +1,78 @@
-# Papaya Pathfinder
+# Papaya Pathfinder — Personal Build
 
 <div style="text-align: center;">
   <img src="patch.png" alt="Papaya Pathfinder patch" width="250"/>
 </div>
 
-Papaya Pathfinder is an open-source family of small remote-controlled rovers based on the **ESP32**.
+This is a personal fork of the open-source [Papaya Pathfinder](https://github.com/tronxi/papaya-pathfinder)
+rover project, building the **full-size Pathfinder** with custom electronics
+and a from-scratch PCB design. It is not a general-purpose reference for the
+upstream project — for that (both rover variants, the Android/desktop
+controllers, full parts lists, licensing), see the archived
+[upstream README](docs/UPSTREAM_README.md).
 
-The project currently includes **two rover variants**, designed for different sizes, motors, and power requirements.
+This fork intentionally does **not** use `pathfinder-mini`,
+`android-controller`, or `desktop-controller` — control is via a standard
+R/C transmitter/receiver instead.
 
-All mechanical parts of the rovers are fully **3D-printable**, and all models are available in the `3d-models/` directories of each rover variant.
+## Hardware
 
-The rovers can be operated using either **WiFi** or **ExpressLRS (ELRS)**, depending on the firmware configuration.
+- **Controller:** ESP32-S3
+- **Radio:** RadioMaster ELRS-RP3-V2 receiver + BETAFPV LiteRadio 2 SE
+  transmitter (ELRS V3, 2.4 GHz) — not covered by the upstream project;
+  see [`docs/elrs-wiring.md`](docs/elrs-wiring.md)
+- **Motor Drivers:** 2× BTS7960/IBT_2
+- **Motors:** 6× GA25 DC gear motors (3 per side, ganged — one PWM signal
+  per side drives all 3 motors on that side simultaneously)
+- **Steering:** 4× MS24 servos (front and rear axles only)
+- **Power:** LiPo 3S
+- **Voltage Regulation:** UBEC 5V/3A (logic) + UBEC 6V/8A (servos)
 
+Full mechanical parts list and 3D-printable files are unchanged from
+upstream — see the [3D-Printed Parts table](docs/UPSTREAM_README.md#3d-printed-parts)
+and [`pathfinder/3d-models/`](pathfinder/3d-models/).
 
-**Watch the Papaya Pathfinder demo on YouTube**
-<div align="center">
-  <a href="https://www.youtube.com/watch?v=BrZb676o0gw" target="_blank">
-    <img src="https://img.youtube.com/vi/BrZb676o0gw/0.jpg"
-         alt="Papaya Pathfinder - Demo Video"
-         width="600"/>
-  </a>
-</div>
+## Electronics & PCB design (this fork's main addition)
 
-## Papaya Pathfinder
+The stock electronics were originally point-to-point soldered onto a
+pre-drilled prototyping board. That's being replaced with a custom PCB,
+designed via a YAML-first workflow rather than starting cold in KiCad:
 
-- **Controller:** ESP32
-- **Radio:** ELRS receiver *(required only when running `firmware-elrs`)*
-- **Motor Drivers:** 2× BTS7960 43A (or similar high-current driver)
-- **Motors:** 6× GA25 DC gear motors
-- **Steering:** 4× MS24 servos
-- **Power:** LiPo 3S Battery
-- **Voltage Regulation:**
-  - 1× UBEC 5V/3A (for ESP32)
-  - 1× UBEC 6V/8A (High current supply for Servos)
+- **[`papaya-wiring-layout.yaml`](papaya-wiring-layout.yaml)** — the single
+  source of truth for the *entire* electrical system (battery, fuse,
+  switch, terminal blocks, motor drivers, UBECs, ESP32, ELRS receiver,
+  motors, servos, and the board's own connectors), not just the board.
+  Real wire gauges, real terminal numbering, ground loop verified closed.
+- **[`pathfinder/kicad/papaya-pcb/`](pathfinder/kicad/papaya-pcb/)** — the
+  KiCad 10 project. The schematic is generated (see below), not hand-drawn.
+- **[`pathfinder/kicad/scripts/generate_schematic.py`](pathfinder/kicad/scripts/generate_schematic.py)** —
+  reads the wiring YAML and writes a fully-wired starter schematic (every
+  component placed, every net labeled), validated against real KiCad 10 with
+  zero ERC errors. Re-run it any time the YAML changes:
+  ```
+  pip install -r pathfinder/kicad/scripts/requirements.txt
+  python pathfinder/kicad/scripts/generate_schematic.py
+  ```
 
-### Firmware
-The rover supports multiple firmware configurations, each enabling a different communication method.
+See **[`docs/development-log.md`](docs/development-log.md)** for the full
+write-up of how the wiring model and generator were built, what got
+corrected along the way, and what's left.
 
-- **[`firmware-wifi`](pathfinder/firmware-wifi/)**
-  - WiFi-based control
-  - HTTP API for movement commands
-  - Compatible controllers:
-    - **[Python desktop controller](desktop-controller/)** — sends gamepad-based control commands to the rover via HTTP.
-    - **[Android mobile app](android-controller/)** — enables rover control using a gamepad, providing the same driving experience available on the desktop controller.
+## Documentation
 
-- **[`firmware-elrs`](pathfinder/firmware-elrs/)**
-  - Control via **ExpressLRS (ELRS)**
-
-### 3D-Printed Parts
-[![Printables](https://img.shields.io/badge/Printables-Download%20STLs-orange?logo=printables&logoColor=white)](https://www.printables.com/model/1564819-papaya-pathfinder-open-source-esp32-rover)
-<div style="text-align: center;">
-  <img src="pathfinder/cad/model.png" alt="Papaya Pathfinder model" width="600"/>
-</div>
-
-All STL files for this rover are available in: **[`pathfinder/3d-models/`](pathfinder/3d-models/)**
-
-The complete mechanical design is also available in **STEP format**: **[`pathfinder/cad/papaya-pathfinder.step`](pathfinder/cad/papaya-pathfinder.step)**
-
-
-Use **PETG or PLA** for the structural parts, and **TPU** for the tires. All parts are designed to be assembled using **M3 screws and nuts**.
-
-| File                | Qty | Material | Notes                                                  |
-|---------------------|-----|--------|--------------------------------------------------------|
-| `body.stl`          | 1   | PETG / PLA | Main chassis                                           |
-| `arm_left.stl`      | 1   | PETG / PLA | Left suspension arm                                    |
-| `arm_right.stl`     | 1   | PETG / PLA | Right suspension arm                                   |
-| `pivot_left.stl`    | 1   | PETG / PLA | Left pivot mount                                       |
-| `pivot_right.stl`   | 1   | PETG / PLA | Right pivot mount                                      |
-| `differential_bar.stl` | 1   | PETG / PLA | Central rocker-bogie differential bar                  |
-| `differential_link_left.stl` | 1   | PETG / PLA | Left link between differential bar and suspension arm  |
-| `differential_link_right.stl` | 1   | PETG / PLA | Right link between differential bar and suspension arm |
-| `motor_mount.stl`   | 4   | PETG / PLA | Motor mounts for GA25 motors used on steering arms     |
-| `horn_adapter.stl`  | 4   | PETG / PLA | Servo horn adapters for steering servos. **Print horizontally for strength.**              |
-| `rim.stl` | 6 | PETG / PLA | **Standard option.** Connects directly to the motor shaft (D-shape). Simple, but can strip over time under high torque. |
-| `rim_hexagonal.stl` | 6 | PETG / PLA | **Pro option (Recommended).** Requires **12mm brass hex adapters**. Much stronger connection, prevents the motor shaft from stripping the plastic. |
-| `tire.stl`   | 6 | TPU | Tires                                                  |
-
-### Wiring Diagram
-- Power Distribution: Shows the rover power distribution, including the LiPo 3S battery,
-  separate UBECs for logic (5V) and servos (6V), and the motor power rails.
-<div style="text-align: center;">
-  <img src="pathfinder/schematics/power_distribution.png" alt="Papaya Pathfinder power distribution"/>
-</div>
-
-- Motors: Motor wiring using two BTS7960 drivers, each controlling one side of the rover.
-  The ESP32 provides PWM control signals to each driver.
-<div style="text-align: center;">
-  <img src="pathfinder/schematics/motors.png" alt="Papaya Pathfinder motors"/>
-</div>
-
-- Servos: Servo wiring powered by a dedicated 6V UBEC. PWM control signals are provided by the ESP32.
-<div style="text-align: center;">
-  <img src="pathfinder/schematics/servos.png" alt="Papaya Pathfinder servos"/>
-</div>
-
-- System Overview: High-level overview of the complete rover wiring, combining power,
-  motor drivers, servos and control logic.
-<div style="text-align: center;">
-  <img src="pathfinder/schematics/overview.png" alt="Papaya Pathfinder overview"/>
-</div>
-
----
-
-## Papaya Pathfinder Mini
-
-- **ESP32 with camera (ESP32-CAM / ESP32-S3-CAM)** *(required only when running `firmware-wifi`)*
-- **ELRS receiver** *(required only when running `firmware-elrs`)*
-- **6× N20 DC gear motors**
-- **Power supply: LiPo 2S**
-- **Voltage regulation:**
-  - 1× DC-DC step-down to **5V** (ESP32 / ESP32-CAM)
-  - 1× DC-DC step-down to **6V** (N20 motors)
-
-### Firmware
-The rover supports multiple firmware configurations, each enabling a different communication method.
-
-- **[`firmware-wifi`](pathfinder-mini/firmware-wifi/)**
-  - WiFi-based control
-  - HTTP API for movement commands
-  - Live video streaming over WiFi
-  - Compatible controllers:
-    - **[Python desktop controller](desktop-controller/)** — displays the live video stream and sends gamepad-based control commands to the rover via HTTP.
-    - **[Android mobile app](android-controller/)** — displays the live video stream and enables rover control using a gamepad, providing the same driving experience available on the desktop controller.
-
-
-- **[`firmware-elrs`](pathfinder-mini/firmware-elrs/)**
-  - Control via **ExpressLRS (ELRS)**
-
-### 3D-Printed Parts
-[![Printables](https://img.shields.io/badge/Printables-Download%20STLs-orange?logo=printables&logoColor=white)](https://www.printables.com/model/1564810-papaya-pathfinder-mini-open-source-esp32-rover)
-<div style="text-align: center;">
-  <img src="pathfinder-mini/cad/model.png" alt="Papaya Pathfinder Mini model" width="600"/>
-</div>
-
-All STL files for this rover are available in: **[`pathfinder-mini/3d-models/`](pathfinder-mini/3d-models/)**
-
-The complete mechanical design is also available in **STEP format**: **[`pathfinder-mini/cad/papaya-pathfinder-mini.step`](pathfinder-mini/cad/papaya-pathfinder-mini.step)**
-
-Use **PETG or PLA** for the structural parts, and **TPU** for the tires. All parts are designed to be assembled using **M3 screws and nuts**.
-
-| File                | Qty | Material | Notes                                                      |
-|---------------------|-----|------|------------------------------------------------------------|
-| `body.stl`          | 1 | PETG / PLA | Main chassis                                               |
-| `arm_left.stl`      | 1 | PETG / PLA | Left suspension arm                                        |
-| `arm_right.stl`     | 1 | PETG / PLA | Right suspension arm                                       |
-| `pivot_left.stl`    | 1 | PETG / PLA | Left pivot mount                                           |
-| `pivot_right.stl`   | 1 | PETG / PLA | Right pivot mount                                          |
-| `differential_bar.stl`  | 1   | PETG / PLA | Central differential bar for the rocker-bogie suspension   |
-| `differential_link.stl` | 2   | PETG / PLA | Links between the differential bar and each suspension arm |
-| `motor_retainer.stl` | 6 | PETG / PLA | Holds each N20 motor                                       |
-| `rim.stl`       | 6 | PETG / PLA | Wheel rims                                                 |
-| `tire.stl`   | 6 | TPU | Tires   
-
-### Wiring Diagram
-
-- System Overview: High-level overview of the complete rover wiring, combining power,
-  motor drivers and control logic.
-<div style="text-align: center;">
-  <img src="pathfinder-mini/schematics/overview.png" alt="Papaya Pathfinder Mini overview"/>
-</div>
+- [`docs/build-notes.md`](docs/build-notes.md) — build journal, gap
+  analysis vs. the upstream docs, project goals for this fork
+- [`docs/elrs-wiring.md`](docs/elrs-wiring.md) — ELRS receiver wiring,
+  binding, and RC channel mapping
+- [`docs/development-log.md`](docs/development-log.md) — wiring model and
+  KiCad generator development summary
+- [`docs/UPSTREAM_README.md`](docs/UPSTREAM_README.md) — archived original
+  project README (both rover variants, full parts tables, controllers)
 
 ## License
 
-This project is licensed under the **Apache License 2.0**.  
-See the [LICENSE](LICENSE) file for details.
+This project is licensed under the **Apache License 2.0** — see
+[LICENSE](LICENSE). This fork is derived from
+[tronxi/papaya-pathfinder](https://github.com/tronxi/papaya-pathfinder);
+see [`docs/UPSTREAM_README.md`](docs/UPSTREAM_README.md) for original
+project attribution.

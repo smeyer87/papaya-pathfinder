@@ -49,6 +49,15 @@
 #   actual copper path is whatever KiCad routes, not something you specify
 #   here — this file just records the intended net.
 #
+# CONNECTOR TYPE (board connectionPoints only)
+#   A board connectionPoint can optionally carry a `connector` block
+#   describing what physical part needs to be populated there — this is
+#   what tells KiCad (and you, at the workbench) whether a point is a
+#   screw terminal, a solder pad, a pin header, or a socket header:
+#     connector: { type: screwTerminal | solderPad | pinHeader | socketHeader, notes: "" }
+#   Leave it off if you haven't decided yet; add it once you know what
+#   needs to be soldered/mounted at that point.
+#
 # BONDED GROUPS (bus bars / ganged terminal positions)
 #   Some components (most often a terminalBlock used as a distribution
 #   bus) have several connectionPoints permanently tied together with a
@@ -58,6 +67,10 @@
 #   feed-in, or the leg to one motor) still attach to a single point within
 #   the group via a normal `connections` entry — the group just says "these
 #   points are already the same node."
+#   The same mechanism works on `board-main` for an on-board power/ground
+#   bus (a copper pour or wide trace tying many pads to one net) — see
+#   `bus-5v` / `bus-gnd` below. No individual point-to-point `connections`
+#   entries are needed between members of the same bondedGroup.
 #
 # This is a STARTING STRUCTURE with one illustrative example per
 # componentType. Replace/expand the example entries with real data from your
@@ -73,7 +86,6 @@ system:
 # COMPONENTS
 # -----------------------------------------------------------------------------
 components:
-
   # --- battery -----------------------------------------------------------
   - id: battery-main
     componentType: battery
@@ -90,7 +102,7 @@ components:
   - id: fuse-main
     componentType: fuse
     name: "Main Power Fuse"
-    model: ""          # e.g. "10A blade fuse"
+    model: "" # e.g. "10A blade fuse"
     notes: ""
     connectionPoints:
       - id: IN
@@ -117,25 +129,60 @@ components:
   - id: tb-power-dist
     componentType: terminalBlock
     name: "Power Distribution Terminal Block"
-    model: ""           # e.g. "5-position screw terminal block"
-    notes: ""
+    model: "Marine-style screw terminal block, positions labeled by manufacturer up to 14"
+    notes: "Terminal numbering is exactly as printed on the device, not sequential/consecutive. Block is mounted with only the top row accessible, so exact total position count and any positions below 6 or between 8-11 are unknown. Master Inputs for A-IN and B-IN then connect to all A and B terminals on the block."
     connectionPoints:
-      - id: A1
+      - id: A-IN
+        label: "A-Master Input"
+      - id: B-IN
+        label: "B-Master Input"
+      - id: A7
         row: A
-        number: 1
-        label: ""       # e.g. "Battery +"
-      - id: A2
+        number: 7
+        label: "A7 - BTS1 supply +"
+      - id: B7
+        row: B
+        number: 7
+        label: "B7 - BTS1 supply -"
+      - id: A6
         row: A
-        number: 2
-        label: ""
-      - id: B1
+        number: 6
+        label: "A6 - UBEC 6V/8A (U1) input +"
+      - id: B6
         row: B
-        number: 1
-        label: ""       # e.g. "Battery -"
-      - id: B2
+        number: 6
+        label: "B6 - UBEC 6V/8A (U1) input -"
+      - id: A14
+        row: A
+        number: 14
+        label: "A14"
+      - id: B14
         row: B
-        number: 2
-        label: ""
+        number: 14
+        label: "B14 - board master ground return"
+      - id: A13
+        row: A
+        number: 13
+        label: "A13 - board main power in (feeds UBEC 5V/3A)"
+      - id: B13
+        row: B
+        number: 13
+        label: "B13 - board main power return"
+      - id: A12
+        row: A
+        number: 12
+        label: "A12 - BTS2 supply +"
+      - id: B12
+        row: B
+        number: 12
+        label: "B12 - BTS2 supply -"
+    bondedGroups:
+      - id: a-bus
+        points: [A-IN, A6, A7, A12, A13, A14]
+        notes: "Master A input is jumpered to every A-row terminal"
+      - id: b-bus
+        points: [B-IN, B6, B7, B12, B13, B14]
+        notes: "Master B input is jumpered to every B-row terminal; this is the terminal block side of the full ground loop back through B14 -> board-main.J_GND_MASTER -> bus-gnd"
 
   # --- terminal block used as a distribution bus (bonded/ganged) -------------
   # Example modeled on a marine 8+8 terminal bus with hardwire jumpers
@@ -145,37 +192,47 @@ components:
   - id: tb-motor-bus
     componentType: terminalBlock
     name: "Motor Power Distribution Bus"
-    model: ""            # e.g. "marine 8+8 position terminal bus"
+    model: "marine 8+8 position terminal bus" # e.g. "marine 8+8 position terminal bus"
     notes: "Positions within a bondedGroup are tied together by a physical hardwire jumper, not a discrete wire."
     connectionPoints:
-      - { id: A1, row: A, number: 1, label: "Right power - IN (from distribution)" }
-      - { id: A3, row: A, number: 3, label: "Right power - to Motor 1" }
-      - { id: A5, row: A, number: 5, label: "Right power - to Motor 3" }
-      - { id: A7, row: A, number: 7, label: "Right power - to Motor 5" }
-      - { id: A2, row: A, number: 2, label: "Left power - IN (from distribution)" }
-      - { id: A4, row: A, number: 4, label: "Left power - to Motor 2" }
-      - { id: A6, row: A, number: 6, label: "Left power - to Motor 4" }
+      - {
+          id: A1,
+          row: A,
+          number: 1,
+          label: "Right power - from BTS1 M+ (driver output)",
+        }
+      - { id: A2, row: A, number: 2, label: "Right power - to Motor 1" }
+      - { id: A3, row: A, number: 3, label: "Right power - to Motor 3" }
+      - { id: A4, row: A, number: 4, label: "Right power - to Motor 5" }
+      - {
+          id: A5,
+          row: A,
+          number: 5,
+          label: "Left power - from BTS2 M+ (driver output)",
+        }
+      - { id: A6, row: A, number: 6, label: "Left power - to Motor 2" }
+      - { id: A7, row: A, number: 7, label: "Left power - to Motor 4" }
       - { id: A8, row: A, number: 8, label: "Left power - to Motor 6" }
-      - { id: B1, row: B, number: 1, label: "Right return - IN" }
-      - { id: B3, row: B, number: 3, label: "Right return - from Motor 1" }
-      - { id: B5, row: B, number: 5, label: "Right return - from Motor 3" }
-      - { id: B7, row: B, number: 7, label: "Right return - from Motor 5" }
-      - { id: B2, row: B, number: 2, label: "Left return - IN" }
-      - { id: B4, row: B, number: 4, label: "Left return - from Motor 2" }
-      - { id: B6, row: B, number: 6, label: "Left return - from Motor 4" }
+      - { id: B1, row: B, number: 1, label: "Right return - from BTS1 M- (driver output)" }
+      - { id: B2, row: B, number: 2, label: "Right return - from Motor 1" }
+      - { id: B3, row: B, number: 3, label: "Right return - from Motor 3" }
+      - { id: B4, row: B, number: 4, label: "Right return - from Motor 5" }
+      - { id: B5, row: B, number: 5, label: "Left return - from BTS2 M- (driver output)" }
+      - { id: B6, row: B, number: 6, label: "Left return - from Motor 2" }
+      - { id: B7, row: B, number: 7, label: "Left return - from Motor 4" }
       - { id: B8, row: B, number: 8, label: "Left return - from Motor 6" }
     bondedGroups:
       - id: right-power
-        points: [A1, A3, A5, A7]
+        points: [A1, A2, A3, A4]
         notes: "Hardwire jumper bar across these 4 positions"
       - id: left-power
-        points: [A2, A4, A6, A8]
+        points: [A5, A6, A7, A8]
         notes: "Hardwire jumper bar across these 4 positions"
       - id: right-return
-        points: [B1, B3, B5, B7]
+        points: [B1, B2, B3, B4]
         notes: "Hardwire jumper bar across these 4 positions"
       - id: left-return
-        points: [B2, B4, B6, B8]
+        points: [B5, B6, B7, B8]
         notes: "Hardwire jumper bar across these 4 positions"
 
   # --- off-board component ----------------------------------------------------
@@ -188,7 +245,7 @@ components:
     notes: ""
     connectionPoints:
       - id: GPIO7
-        label: "Servo #2 signal"
+        label: "Servo signal - S2 (Left-Front)"
       - id: GPIO10
         label: "BTS #2 - pin 1"
       - id: GPIO11
@@ -200,11 +257,11 @@ components:
       - id: GPIO21
         label: "ELRS RX (white wire)"
       - id: GPIO38
-        label: "Servo #4 signal"
+        label: "Servo signal - S4 (Left-Rear)"
       - id: GPIO41
-        label: "Servo #3 signal"
+        label: "Servo signal - S3 (Right-Rear)"
       - id: GPIO42
-        label: "Servo #1 signal"
+        label: "Servo signal - S1 (Right-Front)"
       - id: GPIO47
         label: "ELRS TX (green wire)"
       - id: 5V_IN
@@ -213,6 +270,194 @@ components:
         label: "Ground (near 5V IN)"
       - id: GND_2
         label: "Ground (near TX)"
+
+  # --- off-board component: small solder-mounted UBEC --------------------
+  # Physically tiny (smaller than a postage stamp) and intended to be
+  # mounted directly on the board, but it's still a separate module with
+  # its own 4 pins — same offBoard/board-socket pattern as the ESP32, just
+  # soldered directly rather than plugged into a socket header.
+  - id: u2
+    componentType: offBoard
+    name: "UBEC 5V/3A"
+    model: ""
+    notes: "Supplies 5V rail to ESP32, servos, and motor driver signal pins."
+    connectionPoints:
+      - id: IN+
+        label: "Input +"
+      - id: IN-
+        label: "Input -"
+      - id: OUT+
+        label: "Output +"
+      - id: OUT-
+        label: "Output -"
+
+  # --- off-board component: motor drivers (BTS7960 / IBT_2 modules) ------
+  # B-/B+/M-/M+ are the high-current screw terminals — these wire DIRECTLY
+  # to the terminal blocks, bypassing the board entirely, per the earlier
+  # guidance about not routing pack-level current across the small PCB.
+  # Pins 1/2/3/4/7/8 are low-current logic pins and DO route through the
+  # board (see board-main's J_BTS1.*/J_BTS2.* connector points).
+  - id: BTS1
+    componentType: offBoard
+    name: "Motor Driver #1 (BTS7960/IBT_2)"
+    model: "BTS7960/IBT_2"
+    notes: "Drives right-side motors (M1, M3, M5) via tb-motor-bus."
+    connectionPoints:
+      - { id: "B-", label: "Motor supply B- (screw terminal)" }
+      - { id: "B+", label: "Motor supply B+ (screw terminal)" }
+      - { id: "M-", label: "Motor output M- (screw terminal)" }
+      - { id: "M+", label: "Motor output M+ (screw terminal)" }
+      - { id: PIN1_RPWM, label: "Pin 1 - R-PWM" }
+      - { id: PIN2_LPWM, label: "Pin 2 - L-PWM" }
+      - { id: PIN3_REN, label: "Pin 3 - R-EN" }
+      - { id: PIN4_LEN, label: "Pin 4 - L-EN" }
+      - { id: PIN7_VCC, label: "Pin 7 - VCC" }
+      - { id: PIN8_GND, label: "Pin 8 - GND" }
+
+  - id: BTS2
+    componentType: offBoard
+    name: "Motor Driver #2 (BTS7960/IBT_2)"
+    model: "BTS7960/IBT_2"
+    notes: "Drives left-side motors (M2, M4, M6) via tb-motor-bus."
+    connectionPoints:
+      - { id: "B-", label: "Motor supply B- (screw terminal)" }
+      - { id: "B+", label: "Motor supply B+ (screw terminal)" }
+      - { id: "M-", label: "Motor output M- (screw terminal)" }
+      - { id: "M+", label: "Motor output M+ (screw terminal)" }
+      - { id: PIN1_RPWM, label: "Pin 1 - R-PWM" }
+      - { id: PIN2_LPWM, label: "Pin 2 - L-PWM" }
+      - { id: PIN3_REN, label: "Pin 3 - R-EN" }
+      - { id: PIN4_LEN, label: "Pin 4 - L-EN" }
+      - { id: PIN7_VCC, label: "Pin 7 - VCC" }
+      - { id: PIN8_GND, label: "Pin 8 - GND" }
+
+  # --- off-board component: 6V/8A UBEC (servo power) ----------------------
+  # Input comes straight from tb-power-dist (bypasses the board, like
+  # BTS1/BTS2's high-current terminals); regulated 6V output enters the
+  # board via screw terminals that feed the servo power bus.
+  - id: U1
+    componentType: offBoard
+    name: "UBEC 6V/8A"
+    model: ""
+    notes: "Supplies 6V servo power bus (S1-S4)."
+    connectionPoints:
+      - id: IN+
+        label: "Input + (red wire)"
+      - id: IN-
+        label: "Input - (black wire)"
+      - id: OUT+
+        label: "Output + (6V)"
+      - id: OUT-
+        label: "Output - (6V)"
+
+  # --- off-board component: ELRS receiver ---------------------------------
+  # RadioMaster RP3-V2. Wire colors per docs/elrs-wiring.md: red=VCC,
+  # black=GND, green=TX (receiver output), white=RX (receiver input).
+  - id: ELRS
+    componentType: offBoard
+    name: "ELRS Receiver (RadioMaster RP3-V2)"
+    model: "RadioMaster ELRS-RP3-V2"
+    notes: ""
+    connectionPoints:
+      - id: VCC
+        label: "VCC (red wire)"
+      - id: GND
+        label: "GND (black wire)"
+      - id: TX
+        label: "TX - receiver output (green wire)"
+      - id: RX
+        label: "RX - receiver input (white wire)"
+
+  # --- off-board components: motors ---------------------------------------
+  # Shells only — wiring to tb-motor-bus not yet defined.
+  - id: M1
+    componentType: offBoard
+    name: "Motor 1 (Right - Wheel 1)"
+    model: "GA25 DC gear motor"
+    notes: ""
+    connectionPoints:
+      - { id: "+", label: "Motor +" }
+      - { id: "-", label: "Motor -" }
+  - id: M2
+    componentType: offBoard
+    name: "Motor 2 (Left - Wheel 2)"
+    model: "GA25 DC gear motor"
+    notes: ""
+    connectionPoints:
+      - { id: "+", label: "Motor +" }
+      - { id: "-", label: "Motor -" }
+  - id: M3
+    componentType: offBoard
+    name: "Motor 3 (Right - Wheel 3)"
+    model: "GA25 DC gear motor"
+    notes: ""
+    connectionPoints:
+      - { id: "+", label: "Motor +" }
+      - { id: "-", label: "Motor -" }
+  - id: M4
+    componentType: offBoard
+    name: "Motor 4 (Left - Wheel 4)"
+    model: "GA25 DC gear motor"
+    notes: ""
+    connectionPoints:
+      - { id: "+", label: "Motor +" }
+      - { id: "-", label: "Motor -" }
+  - id: M5
+    componentType: offBoard
+    name: "Motor 5 (Right - Wheel 5)"
+    model: "GA25 DC gear motor"
+    notes: ""
+    connectionPoints:
+      - { id: "+", label: "Motor +" }
+      - { id: "-", label: "Motor -" }
+  - id: M6
+    componentType: offBoard
+    name: "Motor 6 (Left - Wheel 6)"
+    model: "GA25 DC gear motor"
+    notes: ""
+    connectionPoints:
+      - { id: "+", label: "Motor +" }
+      - { id: "-", label: "Motor -" }
+
+  # --- off-board components: servos ---------------------------------------
+  # Shells only — power bus and board connectors not yet defined
+  # (pending the 6V/8A UBEC "U1").
+  - id: S1
+    componentType: offBoard
+    name: "Servo 1 (Right-Front - Wheel 1)"
+    model: "MS24 servo"
+    notes: ""
+    connectionPoints:
+      - { id: SIG, label: "Signal (GPIO42, per ESP32 wiring instructions)" }
+      - { id: PWR, label: "Power (6V)" }
+      - { id: GND, label: "Ground" }
+  - id: S2
+    componentType: offBoard
+    name: "Servo 2 (Left-Front - Wheel 2)"
+    model: "MS24 servo"
+    notes: ""
+    connectionPoints:
+      - { id: SIG, label: "Signal (GPIO7, per ESP32 wiring instructions)" }
+      - { id: PWR, label: "Power (6V)" }
+      - { id: GND, label: "Ground" }
+  - id: S3
+    componentType: offBoard
+    name: "Servo 3 (Right-Rear - Wheel 5)"
+    model: "MS24 servo"
+    notes: ""
+    connectionPoints:
+      - { id: SIG, label: "Signal (GPIO41, per ESP32 wiring instructions)" }
+      - { id: PWR, label: "Power (6V)" }
+      - { id: GND, label: "Ground" }
+  - id: S4
+    componentType: offBoard
+    name: "Servo 4 (Left-Rear - Wheel 6)"
+    model: "MS24 servo"
+    notes: ""
+    connectionPoints:
+      - { id: SIG, label: "Signal (GPIO38, per ESP32 wiring instructions)" }
+      - { id: PWR, label: "Power (6V)" }
+      - { id: GND, label: "Ground" }
 
   # --- board (custom PCB) -----------------------------------------------------
   # The physical board being designed in KiCad. Its connection points are
@@ -228,18 +473,184 @@ components:
     connectionPoints:
       # id = KiCad connector reference designator + pin (e.g. "J1.1"),
       # once real connectors/designators exist in the .kicad_sch.
+      # J1 = main battery power in, feeding the UBEC 5V/3A branch. NOTE:
+      # this carries raw 3S pack voltage, NOT 5V — "J_UBEC5V" downstream
+      # is just the module's own name, not the voltage present at J1.
       - id: J1.1
-        label: ""       # e.g. "5V IN"
+        label: "Main battery power IN (raw 3S voltage, feeds UBEC 5V/3A input)"
+        connector: { type: screwTerminal, notes: "High-current feed — size terminal/pad for total downstream current" }
       - id: J1.2
-        label: ""       # e.g. "GND"
+        label: "" # e.g. "GND"
+        connector: { type: screwTerminal }
       # Example: a socket header the ESP32 module plugs into, plus a
       # header pin that routes on (via internal trace) to a servo
       # connector — illustrates the offBoard-module -> board-connector
       # -> board-connector pattern discussed for the ESP32.
       - id: J_ESP32.7
         label: "ESP32 GPIO7 (socket pin)"
-      - id: J_SERVO2.SIG
-        label: "Servo #2 signal pin"
+        connector: { type: socketHeader }
+      - id: J_ESP32.5V
+        label: "ESP32 5V IN (socket pin)"
+        connector: { type: socketHeader }
+      - id: J_ESP32.GND_1
+        label: "ESP32 ground, near 5V IN (socket pin)"
+        connector: { type: socketHeader }
+      - id: J_ESP32.GND_2
+        label: "ESP32 ground, near TX (socket pin)"
+        connector: { type: socketHeader }
+      - id: J_ESP32.10
+        label: "ESP32 GPIO10 - BTS2 pin 1, R-PWM (socket pin)"
+        connector: { type: socketHeader }
+      - id: J_ESP32.11
+        label: "ESP32 GPIO11 - BTS2 pin 2, L-PWM (socket pin)"
+        connector: { type: socketHeader }
+      - id: J_ESP32.12
+        label: "ESP32 GPIO12 - BTS1 pin 1, R-PWM (socket pin)"
+        connector: { type: socketHeader }
+      - id: J_ESP32.13
+        label: "ESP32 GPIO13 - BTS1 pin 2, L-PWM (socket pin)"
+        connector: { type: socketHeader }
+      - id: J_ESP32.21
+        label: "ESP32 GPIO21 - ELRS RX, white wire (socket pin)"
+        connector: { type: socketHeader }
+      - id: J_ESP32.47
+        label: "ESP32 GPIO47 - ELRS TX, green wire (socket pin)"
+        connector: { type: socketHeader }
+      - id: J_ESP32.38
+        label: "ESP32 GPIO38 - S4 (Left-Rear) servo signal (socket pin)"
+        connector: { type: socketHeader }
+      - id: J_ESP32.41
+        label: "ESP32 GPIO41 - S3 (Right-Rear) servo signal (socket pin)"
+        connector: { type: socketHeader }
+      - id: J_ESP32.42
+        label: "ESP32 GPIO42 - S1 (Right-Front) servo signal (socket pin)"
+        connector: { type: socketHeader }
+      # Solder pads for the UBEC 5V/3A module (see u2 component).
+      - id: J_UBEC5V.INP
+        label: "UBEC 5V IN+ pad"
+        connector: { type: solderPad }
+      - id: J_UBEC5V.INN
+        label: "UBEC 5V IN- pad"
+        connector: { type: solderPad }
+      - id: J_UBEC5V.OUTP
+        label: "UBEC 5V OUT+ pad"
+        connector: { type: solderPad }
+      - id: J_UBEC5V.OUTN
+        label: "UBEC 5V OUT- pad"
+        connector: { type: solderPad }
+      # BTS1/BTS2 low-current logic pin headers (see BTS1/BTS2 components).
+      # Pins 3/4/7 (R-EN, L-EN, VCC) ride the 5V bus; pin 8 (GND) rides
+      # the ground bus — see bondedGroups below.
+      - id: J_BTS1.1
+        label: "BTS1 pin 1 - R-PWM"
+        connector: { type: pinHeader }
+      - id: J_BTS1.2
+        label: "BTS1 pin 2 - L-PWM"
+        connector: { type: pinHeader }
+      - id: J_BTS1.3
+        label: "BTS1 pin 3 - R-EN (5V bus)"
+        connector: { type: pinHeader }
+      - id: J_BTS1.4
+        label: "BTS1 pin 4 - L-EN (5V bus)"
+        connector: { type: pinHeader }
+      - id: J_BTS1.7
+        label: "BTS1 pin 7 - VCC (5V bus)"
+        connector: { type: pinHeader }
+      - id: J_BTS1.8
+        label: "BTS1 pin 8 - GND (ground bus)"
+        connector: { type: pinHeader }
+      - id: J_BTS2.1
+        label: "BTS2 pin 1 - R-PWM"
+        connector: { type: pinHeader }
+      - id: J_BTS2.2
+        label: "BTS2 pin 2 - L-PWM"
+        connector: { type: pinHeader }
+      - id: J_BTS2.3
+        label: "BTS2 pin 3 - R-EN (5V bus)"
+        connector: { type: pinHeader }
+      - id: J_BTS2.4
+        label: "BTS2 pin 4 - L-EN (5V bus)"
+        connector: { type: pinHeader }
+      - id: J_BTS2.7
+        label: "BTS2 pin 7 - VCC (5V bus)"
+        connector: { type: pinHeader }
+      - id: J_BTS2.8
+        label: "BTS2 pin 8 - GND (ground bus)"
+        connector: { type: pinHeader }
+      # Single 4-pin header for the ELRS receiver (VCC/GND/TX/RX together,
+      # matching its own 4-wire red/black/green/white pigtail).
+      - id: J_ELRS.VCC
+        label: "ELRS VCC (5V bus)"
+        connector: { type: pinHeader }
+      - id: J_ELRS.GND
+        label: "ELRS GND (ground bus)"
+        connector: { type: pinHeader }
+      - id: J_ELRS.TX
+        label: "ELRS TX (green wire)"
+        connector: { type: pinHeader }
+      - id: J_ELRS.RX
+        label: "ELRS RX (white wire)"
+        connector: { type: pinHeader }
+      # Master ground return to tb-power-dist.B14 — see bus-gnd bondedGroup.
+      - id: J_GND_MASTER
+        label: "Master ground OUT (to tb-power-dist.B14)"
+        connector: { type: screwTerminal }
+      # UBEC 6V/8A (U1) output screw terminals — feed the servo power bus.
+      - id: J_UBEC6V.OUTP
+        label: "UBEC 6V OUT+ (servo power bus)"
+        connector: { type: screwTerminal }
+      - id: J_UBEC6V.OUTN
+        label: "UBEC 6V OUT- (servo power bus return)"
+        connector: { type: screwTerminal }
+      # Per-servo 3-pin headers, physical pin order Black(GND)-Red(PWR)-White(SIG),
+      # matching each servo's own connector. PWR joins bus-6v, GND joins bus-gnd,
+      # SIG gets its own trace from the matching ESP32 socket pin.
+      - id: J_S1.GND
+        label: "S1 header pin 1 - GND (black)"
+        connector: { type: pinHeader }
+      - id: J_S1.PWR
+        label: "S1 header pin 2 - PWR (red)"
+        connector: { type: pinHeader }
+      - id: J_S1.SIG
+        label: "S1 header pin 3 - SIG (white)"
+        connector: { type: pinHeader }
+      - id: J_S2.GND
+        label: "S2 header pin 1 - GND (black)"
+        connector: { type: pinHeader }
+      - id: J_S2.PWR
+        label: "S2 header pin 2 - PWR (red)"
+        connector: { type: pinHeader }
+      - id: J_S2.SIG
+        label: "S2 header pin 3 - SIG (white)"
+        connector: { type: pinHeader }
+      - id: J_S3.GND
+        label: "S3 header pin 1 - GND (black)"
+        connector: { type: pinHeader }
+      - id: J_S3.PWR
+        label: "S3 header pin 2 - PWR (red)"
+        connector: { type: pinHeader }
+      - id: J_S3.SIG
+        label: "S3 header pin 3 - SIG (white)"
+        connector: { type: pinHeader }
+      - id: J_S4.GND
+        label: "S4 header pin 1 - GND (black)"
+        connector: { type: pinHeader }
+      - id: J_S4.PWR
+        label: "S4 header pin 2 - PWR (red)"
+        connector: { type: pinHeader }
+      - id: J_S4.SIG
+        label: "S4 header pin 3 - SIG (white)"
+        connector: { type: pinHeader }
+    bondedGroups:
+      - id: bus-5v
+        points: [J_UBEC5V.OUTP, J_ESP32.5V, J_BTS1.3, J_BTS1.4, J_BTS1.7, J_BTS2.3, J_BTS2.4, J_BTS2.7, J_ELRS.VCC]
+        notes: "On-board 5V distribution bus (copper pour / wide trace), fed by U2 (UBEC 5V/3A)"
+      - id: bus-6v
+        points: [J_UBEC6V.OUTP, J_S1.PWR, J_S2.PWR, J_S3.PWR, J_S4.PWR]
+        notes: "On-board 6V servo power bus, fed by U1 (UBEC 6V/8A)"
+      - id: bus-gnd
+        points: [J_UBEC5V.OUTN, J_UBEC6V.OUTN, J_ESP32.GND_1, J_ESP32.GND_2, J_BTS1.8, J_BTS2.8, J_ELRS.GND, J_S1.GND, J_S2.GND, J_S3.GND, J_S4.GND, J_GND_MASTER]
+        notes: "On-board common ground bus (5V, 6V, and logic returns all share one ground); J_GND_MASTER carries it back off-board to tb-power-dist.B14"
 
 # -----------------------------------------------------------------------------
 # CONNECTIONS
@@ -248,14 +659,13 @@ components:
 # component id + one of its connectionPoints ids. Order doesn't imply
 # direction unless noted. See "CONNECTION MEDIUM" above for `medium.kind`.
 connections:
-
   - id: conn-001
     from: { component: battery-main, point: POS }
     to: { component: fuse-main, point: IN }
     medium:
       kind: wire
       color: red
-      gauge: ""         # e.g. "14 AWG"
+      gauge: "14 AWG"
       lengthMm: null
     notes: ""
 
@@ -265,64 +675,590 @@ connections:
     medium:
       kind: wire
       color: red
-      gauge: ""
+      gauge: "14 AWG"
       lengthMm: null
     notes: ""
 
   - id: conn-003
     from: { component: switch-main, point: OUT }
-    to: { component: tb-power-dist, point: A1 }
+    to: { component: tb-power-dist, point: A-IN }
     medium:
       kind: wire
       color: red
-      gauge: ""
+      gauge: "14 AWG"
       lengthMm: null
     notes: ""
 
   - id: conn-004
-    from: { component: tb-power-dist, point: A1 }
+    from: { component: battery-main, point: NEG }
+    to: { component: tb-power-dist, point: B-IN }
+    medium:
+      kind: wire
+      color: black
+      gauge: "14 AWG"
+      lengthMm: null
+    notes: ""
+
+  - id: conn-005
+    from: { component: tb-power-dist, point: A13 }
     to: { component: board-main, point: J1.1 }
     medium:
       kind: wire
       color: red
-      gauge: ""
+      gauge: "18 AWG"
       lengthMm: null
-    notes: ""
+    notes: "Main battery power in from distribution block, NOT stepped down yet"
 
   # --- example: off-board module -> board connector (still a wire; this
   # is the ESP32 module's pin mating into the board's socket header) ---
-  - id: conn-005
+  - id: conn-006
     from: { component: esp32, point: GPIO7 }
     to: { component: board-main, point: J_ESP32.7 }
     medium:
       kind: wire
       color: ""
-      gauge: ""
+      gauge: "22 AWG"
       lengthMm: null
     notes: "ESP32 module plugged into on-board socket header"
 
   # --- example: board-internal PCB trace (both endpoints on board-main) ---
-  - id: conn-006
+  - id: conn-007
     from: { component: board-main, point: J_ESP32.7 }
-    to: { component: board-main, point: J_SERVO2.SIG }
+    to: { component: board-main, point: J_S2.SIG }
     medium:
       kind: trace
       layer: "F.Cu"
       widthMm: 0.5
-    notes: "Routes ESP32 GPIO7 to the servo #2 header; actual copper path is whatever KiCad routes"
+    notes: "Routes ESP32 GPIO7 to the S2 (Left-Front) servo header; actual copper path is whatever KiCad routes"
 
-  # --- example: wires landing on a bonded/ganged terminal bus ---
-  # Each wire attaches to ONE position; tb-motor-bus.bondedGroups already
-  # ties that position to the other 3 in its group, so a single feed-in
-  # wire here effectively reaches every motor leg in the group.
-  - id: conn-007
-    from: { component: switch-main, point: OUT }
-    to: { component: tb-motor-bus, point: A1 }
+  # --- corrected: tb-motor-bus is fed by the BTS driver's output, not
+  # directly by the switch/distribution — see BTS1/BTS2 connections below
+  # (was a placeholder before BTS1/BTS2 were defined; superseded).
+  # id: conn-008 retired — replaced by conn-024 (BTS1 M+ -> tb-motor-bus.A1)
+
+  # --- example: small solder-mounted module -> board pads (UBEC 5V/3A) ---
+  # Same offBoard-module -> board-connector pattern as the ESP32, but
+  # since the UBEC is soldered directly rather than socketed, these
+  # "wires" are really just solder joints — color/gauge left blank.
+  - id: conn-009
+    from: { component: u2, point: IN+ }
+    to: { component: board-main, point: J_UBEC5V.INP }
     medium:
       kind: wire
-      color: red
+      color: ""
       gauge: ""
       lengthMm: null
-    notes: "Right-side motor power feed-in"
-    # A3/A5/A7 (also bonded to A1) would each get their own conn-00N wire
-    # out to Motor 1 / Motor 3 / Motor 5's actual power terminal.
+    notes: "Direct solder pad, no discrete wire"
+
+  - id: conn-010
+    from: { component: u2, point: IN- }
+    to: { component: board-main, point: J_UBEC5V.INN }
+    medium:
+      kind: wire
+      color: ""
+      gauge: ""
+      lengthMm: null
+    notes: "Direct solder pad, no discrete wire"
+
+  - id: conn-011
+    from: { component: u2, point: OUT+ }
+    to: { component: board-main, point: J_UBEC5V.OUTP }
+    medium:
+      kind: wire
+      color: ""
+      gauge: ""
+      lengthMm: null
+    notes: "Direct solder pad, no discrete wire"
+
+  - id: conn-012
+    from: { component: u2, point: OUT- }
+    to: { component: board-main, point: J_UBEC5V.OUTN }
+    medium:
+      kind: wire
+      color: ""
+      gauge: ""
+      lengthMm: null
+    notes: "Direct solder pad, no discrete wire"
+
+  # --- example: UBEC output distributed onward via board traces ---
+  - id: conn-013
+    from: { component: esp32, point: 5V_IN }
+    to: { component: board-main, point: J_ESP32.5V }
+    medium:
+      kind: wire
+      color: ""
+      gauge: "22 AWG"
+      lengthMm: null
+    notes: "ESP32 module plugged into on-board socket header"
+
+  # id: conn-014 retired — J_UBEC5V.OUTP and J_ESP32.5V are now both
+  # members of board-main's "bus-5v" bondedGroup, which already declares
+  # them the same net; the explicit point-to-point trace is redundant.
+
+  # --- example: raw battery voltage in, routed to the UBEC's input pad ---
+  - id: conn-015
+    from: { component: board-main, point: J1.1 }
+    to: { component: board-main, point: J_UBEC5V.INP }
+    medium:
+      kind: trace
+      layer: "F.Cu"
+      widthMm: "" # high-current — size for total 3S draw into this UBEC, not the usual signal-trace default
+    notes: "Carries raw 3S pack voltage into the UBEC's input, not 5V"
+
+  - id: conn-016
+    from: { component: tb-power-dist, point: B13 }
+    to: { component: board-main, point: J1.2 }
+    medium:
+      kind: wire
+      color: black
+      gauge: "18 AWG"
+      lengthMm: null
+    notes: "Main battery return (-) in from distribution block"
+
+  - id: conn-017
+    from: { component: board-main, point: J1.2 }
+    to: { component: board-main, point: J_UBEC5V.INN }
+    medium:
+      kind: trace
+      layer: "F.Cu"
+      widthMm: "" # high-current — size for total 3S draw into this UBEC, not the usual signal-trace default
+    notes: "Battery return (-) into the UBEC's input"
+
+  # --- ESP32 low-current signal pins: module -> board socket header ---
+  - id: conn-018
+    from: { component: esp32, point: GPIO10 }
+    to: { component: board-main, point: J_ESP32.10 }
+    medium: { kind: wire, color: "", gauge: "22 AWG", lengthMm: null }
+    notes: "ESP32 module plugged into on-board socket header"
+
+  - id: conn-019
+    from: { component: esp32, point: GPIO11 }
+    to: { component: board-main, point: J_ESP32.11 }
+    medium: { kind: wire, color: "", gauge: "22 AWG", lengthMm: null }
+    notes: "ESP32 module plugged into on-board socket header"
+
+  - id: conn-020
+    from: { component: esp32, point: GPIO12 }
+    to: { component: board-main, point: J_ESP32.12 }
+    medium: { kind: wire, color: "", gauge: "22 AWG", lengthMm: null }
+    notes: "ESP32 module plugged into on-board socket header"
+
+  - id: conn-021
+    from: { component: esp32, point: GPIO13 }
+    to: { component: board-main, point: J_ESP32.13 }
+    medium: { kind: wire, color: "", gauge: "22 AWG", lengthMm: null }
+    notes: "ESP32 module plugged into on-board socket header"
+
+  - id: conn-022
+    from: { component: esp32, point: GPIO21 }
+    to: { component: board-main, point: J_ESP32.21 }
+    medium: { kind: wire, color: "", gauge: "22 AWG", lengthMm: null }
+    notes: "ESP32 module plugged into on-board socket header"
+
+  - id: conn-023
+    from: { component: esp32, point: GPIO47 }
+    to: { component: board-main, point: J_ESP32.47 }
+    medium: { kind: wire, color: "", gauge: "22 AWG", lengthMm: null }
+    notes: "ESP32 module plugged into on-board socket header"
+
+  - id: conn-023b
+    from: { component: esp32, point: GND_1 }
+    to: { component: board-main, point: J_ESP32.GND_1 }
+    medium: { kind: wire, color: "", gauge: "22 AWG", lengthMm: null }
+    notes: "ESP32 module plugged into on-board socket header; feeds board-main's ground bus"
+
+  # --- BTS1: high-current screw terminals wire DIRECTLY to the terminal
+  # blocks, bypassing the board (per guidance on not routing pack current
+  # across the small PCB). This also supersedes the old conn-008 placeholder.
+  - id: conn-024
+    from: { component: BTS1, point: "M+" }
+    to: { component: tb-motor-bus, point: A1 }
+    medium: { kind: wire, color: red, gauge: "18 AWG", lengthMm: null }
+    notes: "BTS1 driver output, right-side motor power"
+
+  - id: conn-025
+    from: { component: BTS1, point: "M-" }
+    to: { component: tb-motor-bus, point: B1 }
+    medium: { kind: wire, color: black, gauge: "18 AWG", lengthMm: null }
+    notes: "BTS1 driver output return, right-side motor return"
+
+  - id: conn-026
+    from: { component: BTS1, point: "B+" }
+    to: { component: tb-power-dist, point: A7 }
+    medium: { kind: wire, color: red, gauge: "18 AWG", lengthMm: null }
+    notes: "BTS1 high-current motor supply in"
+
+  - id: conn-027
+    from: { component: BTS1, point: "B-" }
+    to: { component: tb-power-dist, point: B7 }
+    medium: { kind: wire, color: black, gauge: "18 AWG", lengthMm: null }
+    notes: "BTS1 high-current motor supply return"
+
+  # --- BTS1 logic pins: module -> board pin header ---
+  - id: conn-028
+    from: { component: BTS1, point: PIN1_RPWM }
+    to: { component: board-main, point: J_BTS1.1 }
+    medium: { kind: wire, color: "", gauge: "22 AWG", lengthMm: null }
+    notes: ""
+
+  - id: conn-029
+    from: { component: BTS1, point: PIN2_LPWM }
+    to: { component: board-main, point: J_BTS1.2 }
+    medium: { kind: wire, color: "", gauge: "22 AWG", lengthMm: null }
+    notes: ""
+
+  - id: conn-030
+    from: { component: BTS1, point: PIN3_REN }
+    to: { component: board-main, point: J_BTS1.3 }
+    medium: { kind: wire, color: "", gauge: "22 AWG", lengthMm: null }
+    notes: "Joins board-main's 5V bus"
+
+  - id: conn-031
+    from: { component: BTS1, point: PIN4_LEN }
+    to: { component: board-main, point: J_BTS1.4 }
+    medium: { kind: wire, color: "", gauge: "22 AWG", lengthMm: null }
+    notes: "Joins board-main's 5V bus"
+
+  - id: conn-032
+    from: { component: BTS1, point: PIN7_VCC }
+    to: { component: board-main, point: J_BTS1.7 }
+    medium: { kind: wire, color: "", gauge: "22 AWG", lengthMm: null }
+    notes: "Joins board-main's 5V bus"
+
+  - id: conn-033
+    from: { component: BTS1, point: PIN8_GND }
+    to: { component: board-main, point: J_BTS1.8 }
+    medium: { kind: wire, color: "", gauge: "22 AWG", lengthMm: null }
+    notes: "Joins board-main's ground bus"
+
+  # --- BTS2: mirrors BTS1, using tb-power-dist.A12/B12 and tb-motor-bus.A5/B5 ---
+  - id: conn-034
+    from: { component: BTS2, point: "M+" }
+    to: { component: tb-motor-bus, point: A5 }
+    medium: { kind: wire, color: red, gauge: "18 AWG", lengthMm: null }
+    notes: "BTS2 driver output, left-side motor power"
+
+  - id: conn-035
+    from: { component: BTS2, point: "M-" }
+    to: { component: tb-motor-bus, point: B5 }
+    medium: { kind: wire, color: black, gauge: "18 AWG", lengthMm: null }
+    notes: "BTS2 driver output return, left-side motor return"
+
+  - id: conn-036
+    from: { component: BTS2, point: "B+" }
+    to: { component: tb-power-dist, point: A12 }
+    medium: { kind: wire, color: red, gauge: "18 AWG", lengthMm: null }
+    notes: "BTS2 high-current motor supply in"
+
+  - id: conn-037
+    from: { component: BTS2, point: "B-" }
+    to: { component: tb-power-dist, point: B12 }
+    medium: { kind: wire, color: black, gauge: "18 AWG", lengthMm: null }
+    notes: "BTS2 high-current motor supply return"
+
+  - id: conn-038
+    from: { component: BTS2, point: PIN1_RPWM }
+    to: { component: board-main, point: J_BTS2.1 }
+    medium: { kind: wire, color: "", gauge: "22 AWG", lengthMm: null }
+    notes: ""
+
+  - id: conn-039
+    from: { component: BTS2, point: PIN2_LPWM }
+    to: { component: board-main, point: J_BTS2.2 }
+    medium: { kind: wire, color: "", gauge: "22 AWG", lengthMm: null }
+    notes: ""
+
+  - id: conn-040
+    from: { component: BTS2, point: PIN3_REN }
+    to: { component: board-main, point: J_BTS2.3 }
+    medium: { kind: wire, color: "", gauge: "22 AWG", lengthMm: null }
+    notes: "Joins board-main's 5V bus"
+
+  - id: conn-041
+    from: { component: BTS2, point: PIN4_LEN }
+    to: { component: board-main, point: J_BTS2.4 }
+    medium: { kind: wire, color: "", gauge: "22 AWG", lengthMm: null }
+    notes: "Joins board-main's 5V bus"
+
+  - id: conn-042
+    from: { component: BTS2, point: PIN7_VCC }
+    to: { component: board-main, point: J_BTS2.7 }
+    medium: { kind: wire, color: "", gauge: "22 AWG", lengthMm: null }
+    notes: "Joins board-main's 5V bus"
+
+  - id: conn-043
+    from: { component: BTS2, point: PIN8_GND }
+    to: { component: board-main, point: J_BTS2.8 }
+    medium: { kind: wire, color: "", gauge: "22 AWG", lengthMm: null }
+    notes: "Joins board-main's ground bus"
+
+  # --- ELRS receiver: module -> board 4-pin header ---
+  - id: conn-044
+    from: { component: ELRS, point: VCC }
+    to: { component: board-main, point: J_ELRS.VCC }
+    medium: { kind: wire, color: red, gauge: "22 AWG", lengthMm: null }
+    notes: "Joins board-main's 5V bus"
+
+  - id: conn-045
+    from: { component: ELRS, point: GND }
+    to: { component: board-main, point: J_ELRS.GND }
+    medium: { kind: wire, color: black, gauge: "22 AWG", lengthMm: null }
+    notes: "Joins board-main's ground bus"
+
+  - id: conn-046
+    from: { component: ELRS, point: TX }
+    to: { component: board-main, point: J_ELRS.TX }
+    medium: { kind: wire, color: green, gauge: "22 AWG", lengthMm: null }
+    notes: ""
+
+  - id: conn-047
+    from: { component: ELRS, point: RX }
+    to: { component: board-main, point: J_ELRS.RX }
+    medium: { kind: wire, color: white, gauge: "22 AWG", lengthMm: null }
+    notes: ""
+
+  # --- board-internal traces: ESP32 signal sockets -> their destinations ---
+  - id: conn-048
+    from: { component: board-main, point: J_ESP32.12 }
+    to: { component: board-main, point: J_BTS1.1 }
+    medium: { kind: trace, layer: "F.Cu", widthMm: 0.3 }
+    notes: "GPIO12 -> BTS1 R-PWM"
+
+  - id: conn-049
+    from: { component: board-main, point: J_ESP32.13 }
+    to: { component: board-main, point: J_BTS1.2 }
+    medium: { kind: trace, layer: "F.Cu", widthMm: 0.3 }
+    notes: "GPIO13 -> BTS1 L-PWM"
+
+  - id: conn-050
+    from: { component: board-main, point: J_ESP32.10 }
+    to: { component: board-main, point: J_BTS2.1 }
+    medium: { kind: trace, layer: "F.Cu", widthMm: 0.3 }
+    notes: "GPIO10 -> BTS2 R-PWM"
+
+  - id: conn-051
+    from: { component: board-main, point: J_ESP32.11 }
+    to: { component: board-main, point: J_BTS2.2 }
+    medium: { kind: trace, layer: "F.Cu", widthMm: 0.3 }
+    notes: "GPIO11 -> BTS2 L-PWM"
+
+  - id: conn-052
+    from: { component: board-main, point: J_ESP32.47 }
+    to: { component: board-main, point: J_ELRS.TX }
+    medium: { kind: trace, layer: "F.Cu", widthMm: 0.3 }
+    notes: "GPIO47 <-> ELRS TX (green wire)"
+
+  - id: conn-053
+    from: { component: board-main, point: J_ESP32.21 }
+    to: { component: board-main, point: J_ELRS.RX }
+    medium: { kind: trace, layer: "F.Cu", widthMm: 0.3 }
+    notes: "GPIO21 <-> ELRS RX (white wire)"
+
+  # --- master ground: board-main's ground bus back to tb-power-dist.B14 ---
+  - id: conn-054
+    from: { component: board-main, point: J_GND_MASTER }
+    to: { component: tb-power-dist, point: B14 }
+    medium: { kind: wire, color: black, gauge: "18 AWG", lengthMm: null }
+    notes: "Board-wide ground return to main distribution block"
+
+  # --- U1 (UBEC 6V/8A): input bypasses the board (like BTS1/BTS2), output
+  # enters via screw terminals feeding the servo power bus ---
+  - id: conn-055
+    from: { component: U1, point: IN+ }
+    to: { component: tb-power-dist, point: A6 }
+    medium: { kind: wire, color: red, gauge: "18 AWG", lengthMm: null }
+    notes: ""
+
+  - id: conn-056
+    from: { component: U1, point: IN- }
+    to: { component: tb-power-dist, point: B6 }
+    medium: { kind: wire, color: black, gauge: "18 AWG", lengthMm: null }
+    notes: ""
+
+  - id: conn-057
+    from: { component: U1, point: OUT+ }
+    to: { component: board-main, point: J_UBEC6V.OUTP }
+    medium: { kind: wire, color: red, gauge: "18 AWG", lengthMm: null }
+    notes: "Joins board-main's 6V servo bus"
+
+  - id: conn-058
+    from: { component: U1, point: OUT- }
+    to: { component: board-main, point: J_UBEC6V.OUTN }
+    medium: { kind: wire, color: black, gauge: "18 AWG", lengthMm: null }
+    notes: "Joins board-main's ground bus"
+
+  # --- remaining ESP32 servo-signal sockets: module -> board socket header ---
+  - id: conn-059
+    from: { component: esp32, point: GPIO38 }
+    to: { component: board-main, point: J_ESP32.38 }
+    medium: { kind: wire, color: "", gauge: "22 AWG", lengthMm: null }
+    notes: "ESP32 module plugged into on-board socket header"
+
+  - id: conn-060
+    from: { component: esp32, point: GPIO41 }
+    to: { component: board-main, point: J_ESP32.41 }
+    medium: { kind: wire, color: "", gauge: "22 AWG", lengthMm: null }
+    notes: "ESP32 module plugged into on-board socket header"
+
+  - id: conn-061
+    from: { component: esp32, point: GPIO42 }
+    to: { component: board-main, point: J_ESP32.42 }
+    medium: { kind: wire, color: "", gauge: "22 AWG", lengthMm: null }
+    notes: "ESP32 module plugged into on-board socket header"
+
+  # --- board-internal traces: remaining ESP32 signal sockets -> servo headers ---
+  - id: conn-062
+    from: { component: board-main, point: J_ESP32.42 }
+    to: { component: board-main, point: J_S1.SIG }
+    medium: { kind: trace, layer: "F.Cu", widthMm: 0.3 }
+    notes: "GPIO42 -> S1 (Right-Front) signal"
+
+  - id: conn-063
+    from: { component: board-main, point: J_ESP32.41 }
+    to: { component: board-main, point: J_S3.SIG }
+    medium: { kind: trace, layer: "F.Cu", widthMm: 0.3 }
+    notes: "GPIO41 -> S3 (Right-Rear) signal"
+
+  - id: conn-064
+    from: { component: board-main, point: J_ESP32.38 }
+    to: { component: board-main, point: J_S4.SIG }
+    medium: { kind: trace, layer: "F.Cu", widthMm: 0.3 }
+    notes: "GPIO38 -> S4 (Left-Rear) signal"
+
+  # --- servo modules -> board 3-pin headers (Black-Red-White = GND-PWR-SIG) ---
+  - id: conn-065
+    from: { component: S1, point: GND }
+    to: { component: board-main, point: J_S1.GND }
+    medium: { kind: wire, color: black, gauge: "22 AWG", lengthMm: null }
+    notes: "Joins board-main's ground bus"
+  - id: conn-066
+    from: { component: S1, point: PWR }
+    to: { component: board-main, point: J_S1.PWR }
+    medium: { kind: wire, color: red, gauge: "22 AWG", lengthMm: null }
+    notes: "Joins board-main's 6V servo bus"
+  - id: conn-067
+    from: { component: S1, point: SIG }
+    to: { component: board-main, point: J_S1.SIG }
+    medium: { kind: wire, color: white, gauge: "22 AWG", lengthMm: null }
+    notes: ""
+
+  - id: conn-068
+    from: { component: S2, point: GND }
+    to: { component: board-main, point: J_S2.GND }
+    medium: { kind: wire, color: black, gauge: "22 AWG", lengthMm: null }
+    notes: "Joins board-main's ground bus"
+  - id: conn-069
+    from: { component: S2, point: PWR }
+    to: { component: board-main, point: J_S2.PWR }
+    medium: { kind: wire, color: red, gauge: "22 AWG", lengthMm: null }
+    notes: "Joins board-main's 6V servo bus"
+  - id: conn-070
+    from: { component: S2, point: SIG }
+    to: { component: board-main, point: J_S2.SIG }
+    medium: { kind: wire, color: white, gauge: "22 AWG", lengthMm: null }
+    notes: ""
+
+  - id: conn-071
+    from: { component: S3, point: GND }
+    to: { component: board-main, point: J_S3.GND }
+    medium: { kind: wire, color: black, gauge: "22 AWG", lengthMm: null }
+    notes: "Joins board-main's ground bus"
+  - id: conn-072
+    from: { component: S3, point: PWR }
+    to: { component: board-main, point: J_S3.PWR }
+    medium: { kind: wire, color: red, gauge: "22 AWG", lengthMm: null }
+    notes: "Joins board-main's 6V servo bus"
+  - id: conn-073
+    from: { component: S3, point: SIG }
+    to: { component: board-main, point: J_S3.SIG }
+    medium: { kind: wire, color: white, gauge: "22 AWG", lengthMm: null }
+    notes: ""
+
+  - id: conn-074
+    from: { component: S4, point: GND }
+    to: { component: board-main, point: J_S4.GND }
+    medium: { kind: wire, color: black, gauge: "22 AWG", lengthMm: null }
+    notes: "Joins board-main's ground bus"
+  - id: conn-075
+    from: { component: S4, point: PWR }
+    to: { component: board-main, point: J_S4.PWR }
+    medium: { kind: wire, color: red, gauge: "22 AWG", lengthMm: null }
+    notes: "Joins board-main's 6V servo bus"
+  - id: conn-076
+    from: { component: S4, point: SIG }
+    to: { component: board-main, point: J_S4.SIG }
+    medium: { kind: wire, color: white, gauge: "22 AWG", lengthMm: null }
+    notes: ""
+
+  # --- motors -> tb-motor-bus (ganged legs already established via bondedGroups) ---
+  - id: conn-077
+    from: { component: M1, point: "+" }
+    to: { component: tb-motor-bus, point: A2 }
+    medium: { kind: wire, color: red, gauge: "20 AWG", lengthMm: null }
+    notes: ""
+  - id: conn-078
+    from: { component: M1, point: "-" }
+    to: { component: tb-motor-bus, point: B2 }
+    medium: { kind: wire, color: black, gauge: "20 AWG", lengthMm: null }
+    notes: ""
+
+  - id: conn-079
+    from: { component: M3, point: "+" }
+    to: { component: tb-motor-bus, point: A3 }
+    medium: { kind: wire, color: red, gauge: "20 AWG", lengthMm: null }
+    notes: ""
+  - id: conn-080
+    from: { component: M3, point: "-" }
+    to: { component: tb-motor-bus, point: B3 }
+    medium: { kind: wire, color: black, gauge: "20 AWG", lengthMm: null }
+    notes: ""
+
+  - id: conn-081
+    from: { component: M5, point: "+" }
+    to: { component: tb-motor-bus, point: A4 }
+    medium: { kind: wire, color: red, gauge: "20 AWG", lengthMm: null }
+    notes: ""
+  - id: conn-082
+    from: { component: M5, point: "-" }
+    to: { component: tb-motor-bus, point: B4 }
+    medium: { kind: wire, color: black, gauge: "20 AWG", lengthMm: null }
+    notes: ""
+
+  - id: conn-083
+    from: { component: M2, point: "+" }
+    to: { component: tb-motor-bus, point: A6 }
+    medium: { kind: wire, color: red, gauge: "20 AWG", lengthMm: null }
+    notes: ""
+  - id: conn-084
+    from: { component: M2, point: "-" }
+    to: { component: tb-motor-bus, point: B6 }
+    medium: { kind: wire, color: black, gauge: "20 AWG", lengthMm: null }
+    notes: ""
+
+  - id: conn-085
+    from: { component: M4, point: "+" }
+    to: { component: tb-motor-bus, point: A7 }
+    medium: { kind: wire, color: red, gauge: "20 AWG", lengthMm: null }
+    notes: ""
+  - id: conn-086
+    from: { component: M4, point: "-" }
+    to: { component: tb-motor-bus, point: B7 }
+    medium: { kind: wire, color: black, gauge: "20 AWG", lengthMm: null }
+    notes: ""
+
+  - id: conn-087
+    from: { component: M6, point: "+" }
+    to: { component: tb-motor-bus, point: A8 }
+    medium: { kind: wire, color: red, gauge: "20 AWG", lengthMm: null }
+    notes: ""
+  - id: conn-088
+    from: { component: M6, point: "-" }
+    to: { component: tb-motor-bus, point: B8 }
+    medium: { kind: wire, color: black, gauge: "20 AWG", lengthMm: null }
+    notes: ""
+
+  - id: conn-089
+    from: { component: esp32, point: GND_2 }
+    to: { component: board-main, point: J_ESP32.GND_2 }
+    medium: { kind: wire, color: "", gauge: "22 AWG", lengthMm: null }
+    notes: "ESP32 module plugged into on-board socket header; feeds board-main's ground bus"
