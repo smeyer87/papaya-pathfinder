@@ -34,6 +34,17 @@
 # terminals, pads, or screw positions that can be wired to. `connections`
 # then references those points by (componentId, pointId) pairs.
 #
+# KICAD PIN NAME (generator output only — don't hand-author this)
+#   `label` is the full descriptive text for docs/comments; the generated
+#   schematic uses it as each pin's on-screen name, which gets unreadable
+#   fast on symbols with many pins. Once you've tightened pin names up in
+#   KiCad's Symbol Editor for legibility, run
+#   `python pathfinder/kicad/scripts/sync_pin_names.py` to pull those
+#   shortened names back into each connectionPoint's `kicadPinName` field
+#   (added alongside `label`, which is left untouched). Regenerating the
+#   schematic afterward will use `kicadPinName` when present instead of
+#   `label`, so your legibility pass survives a regeneration.
+#
 # CONNECTION MEDIUM (wire vs. PCB trace)
 #   Every entry in `connections` has a `medium` describing HOW the two
 #   points are physically joined:
@@ -95,8 +106,10 @@ components:
     connectionPoints:
       - id: POS
         label: "Positive (+)"
+        kicadPinName: "Positive_(+)"
       - id: NEG
         label: "Negative (-)"
+        kicadPinName: "Negative_(-)"
 
   # --- fuse ----------------------------------------------------------------
   - id: fuse-main
@@ -107,8 +120,10 @@ components:
     connectionPoints:
       - id: IN
         label: "Input (from battery)"
+        kicadPinName: "Input"
       - id: OUT
         label: "Output (to switch/distribution)"
+        kicadPinName: "Output"
 
   # --- switch --------------------------------------------------------------
   - id: switch-main
@@ -119,8 +134,10 @@ components:
     connectionPoints:
       - id: IN
         label: "Input"
+        kicadPinName: "Input"
       - id: OUT
         label: "Output"
+        kicadPinName: "Output"
 
   # --- terminal block --------------------------------------------------------
   # Terminal blocks expose a grid of named positions, e.g. row A / row B,
@@ -134,48 +151,60 @@ components:
     connectionPoints:
       - id: A-IN
         label: "A-Master Input"
+        kicadPinName: "A-Master_Input"
       - id: B-IN
         label: "B-Master Input"
+        kicadPinName: "B-Master_Input"
       - id: A7
         row: A
         number: 7
         label: "A7 - BTS1 supply +"
+        kicadPinName: "A7-BTS1_supply(+)"
       - id: B7
         row: B
         number: 7
         label: "B7 - BTS1 supply -"
+        kicadPinName: "B7-BTS1_supply(-)"
       - id: A6
         row: A
         number: 6
         label: "A6 - UBEC 6V/8A (U1) input +"
+        kicadPinName: "A6-U1_in(+)"
       - id: B6
         row: B
         number: 6
         label: "B6 - UBEC 6V/8A (U1) input -"
+        kicadPinName: "B6-U1_in(-)"
       - id: A14
         row: A
         number: 14
         label: "A14"
+        kicadPinName: "A14-(Unused)"
       - id: B14
         row: B
         number: 14
         label: "B14 - board master ground return"
+        kicadPinName: "B14-board_master_ground"
       - id: A13
         row: A
         number: 13
         label: "A13 - board main power in (feeds UBEC 5V/3A)"
+        kicadPinName: "A13-board_(+)_power(U2)"
       - id: B13
         row: B
         number: 13
         label: "B13 - board main power return"
+        kicadPinName: "B13-board_(-)_return(U2)"
       - id: A12
         row: A
         number: 12
         label: "A12 - BTS2 supply +"
+        kicadPinName: "A12-BTS2_supply(+)"
       - id: B12
         row: B
         number: 12
         label: "B12 - BTS2 supply -"
+        kicadPinName: "B12-BTS2_supply(-)"
     bondedGroups:
       - id: a-bus
         points: [A-IN, A6, A7, A12, A13, A14]
@@ -200,27 +229,29 @@ components:
           row: A,
           number: 1,
           label: "Right power - from BTS1 M+ (driver output)",
+          kicadPinName: "BTS1(M+)",
         }
-      - { id: A2, row: A, number: 2, label: "Right power - to Motor 1" }
-      - { id: A3, row: A, number: 3, label: "Right power - to Motor 3" }
-      - { id: A4, row: A, number: 4, label: "Right power - to Motor 5" }
+      - { id: A2, row: A, number: 2, label: "Right power - to Motor 1", kicadPinName: "M1(+)" }
+      - { id: A3, row: A, number: 3, label: "Right power - to Motor 3", kicadPinName: "M3(+)" }
+      - { id: A4, row: A, number: 4, label: "Right power - to Motor 5", kicadPinName: "M5(+)" }
       - {
           id: A5,
           row: A,
           number: 5,
           label: "Left power - from BTS2 M+ (driver output)",
+          kicadPinName: "BTS2(M+)",
         }
-      - { id: A6, row: A, number: 6, label: "Left power - to Motor 2" }
-      - { id: A7, row: A, number: 7, label: "Left power - to Motor 4" }
-      - { id: A8, row: A, number: 8, label: "Left power - to Motor 6" }
-      - { id: B1, row: B, number: 1, label: "Right return - from BTS1 M- (driver output)" }
-      - { id: B2, row: B, number: 2, label: "Right return - from Motor 1" }
-      - { id: B3, row: B, number: 3, label: "Right return - from Motor 3" }
-      - { id: B4, row: B, number: 4, label: "Right return - from Motor 5" }
-      - { id: B5, row: B, number: 5, label: "Left return - from BTS2 M- (driver output)" }
-      - { id: B6, row: B, number: 6, label: "Left return - from Motor 2" }
-      - { id: B7, row: B, number: 7, label: "Left return - from Motor 4" }
-      - { id: B8, row: B, number: 8, label: "Left return - from Motor 6" }
+      - { id: A6, row: A, number: 6, label: "Left power - to Motor 2", kicadPinName: "M2(+)" }
+      - { id: A7, row: A, number: 7, label: "Left power - to Motor 4", kicadPinName: "M4(+)" }
+      - { id: A8, row: A, number: 8, label: "Left power - to Motor 6", kicadPinName: "M6(+)" }
+      - { id: B1, row: B, number: 1, label: "Right return - from BTS1 M- (driver output)", kicadPinName: "BTS1(M-)" }
+      - { id: B2, row: B, number: 2, label: "Right return - from Motor 1", kicadPinName: "M1(-)" }
+      - { id: B3, row: B, number: 3, label: "Right return - from Motor 3", kicadPinName: "M3(-)" }
+      - { id: B4, row: B, number: 4, label: "Right return - from Motor 5", kicadPinName: "M5(-)" }
+      - { id: B5, row: B, number: 5, label: "Left return - from BTS2 M- (driver output)", kicadPinName: "BTS2(M-)" }
+      - { id: B6, row: B, number: 6, label: "Left return - from Motor 2", kicadPinName: "M2(-)" }
+      - { id: B7, row: B, number: 7, label: "Left return - from Motor 4", kicadPinName: "M4(-)" }
+      - { id: B8, row: B, number: 8, label: "Left return - from Motor 6", kicadPinName: "M6(-)" }
     bondedGroups:
       - id: right-power
         points: [A1, A2, A3, A4]
@@ -246,30 +277,43 @@ components:
     connectionPoints:
       - id: GPIO7
         label: "Servo signal - S2 (Left-Front)"
+        kicadPinName: "Servo_signal-S2(LF)"
       - id: GPIO10
         label: "BTS #2 - pin 1"
+        kicadPinName: "BTS2-pin1"
       - id: GPIO11
         label: "BTS #2 - pin 2"
+        kicadPinName: "BTS2-pin2"
       - id: GPIO12
         label: "BTS #1 - pin 1"
+        kicadPinName: "BTS1-pin1"
       - id: GPIO13
         label: "BTS #1 - pin 2"
+        kicadPinName: "BTS1-pin2"
       - id: GPIO21
         label: "ELRS RX (white wire)"
+        kicadPinName: "ELRS_RX(white)"
       - id: GPIO38
         label: "Servo signal - S4 (Left-Rear)"
+        kicadPinName: "Servo_signal-S4(LR)"
       - id: GPIO41
         label: "Servo signal - S3 (Right-Rear)"
+        kicadPinName: "Servo_signal-S3(RR)"
       - id: GPIO42
         label: "Servo signal - S1 (Right-Front)"
+        kicadPinName: "Servo_signal-S1(RF)"
       - id: GPIO47
         label: "ELRS TX (green wire)"
+        kicadPinName: "ELRS_TX(green)"
       - id: 5V_IN
         label: "5V power in"
+        kicadPinName: "5V_IN"
       - id: GND_1
         label: "Ground (near 5V IN)"
+        kicadPinName: "Ground(near_5V_IN)"
       - id: GND_2
         label: "Ground (near TX)"
+        kicadPinName: "Ground(near_TX)"
 
   # --- off-board component: small solder-mounted UBEC --------------------
   # Physically tiny (smaller than a postage stamp) and intended to be
@@ -284,12 +328,16 @@ components:
     connectionPoints:
       - id: IN+
         label: "Input +"
+        kicadPinName: "Input_+"
       - id: IN-
         label: "Input -"
+        kicadPinName: "Input_-"
       - id: OUT+
         label: "Output +"
+        kicadPinName: "Output_+"
       - id: OUT-
         label: "Output -"
+        kicadPinName: "Output_-"
 
   # --- off-board component: motor drivers (BTS7960 / IBT_2 modules) ------
   # B-/B+/M-/M+ are the high-current screw terminals — these wire DIRECTLY
@@ -303,16 +351,16 @@ components:
     model: "BTS7960/IBT_2"
     notes: "Drives right-side motors (M1, M3, M5) via tb-motor-bus."
     connectionPoints:
-      - { id: "B-", label: "Motor supply B- (screw terminal)" }
-      - { id: "B+", label: "Motor supply B+ (screw terminal)" }
-      - { id: "M-", label: "Motor output M- (screw terminal)" }
-      - { id: "M+", label: "Motor output M+ (screw terminal)" }
-      - { id: PIN1_RPWM, label: "Pin 1 - R-PWM" }
-      - { id: PIN2_LPWM, label: "Pin 2 - L-PWM" }
-      - { id: PIN3_REN, label: "Pin 3 - R-EN" }
-      - { id: PIN4_LEN, label: "Pin 4 - L-EN" }
-      - { id: PIN7_VCC, label: "Pin 7 - VCC" }
-      - { id: PIN8_GND, label: "Pin 8 - GND" }
+      - { id: "B-", label: "Motor supply B- (screw terminal)", kicadPinName: "Motor_supply_B-(screw)" }
+      - { id: "B+", label: "Motor supply B+ (screw terminal)", kicadPinName: "Motor_supply_B+(screw)" }
+      - { id: "M-", label: "Motor output M- (screw terminal)", kicadPinName: "Motor_output_M-(screw)" }
+      - { id: "M+", label: "Motor output M+ (screw terminal)", kicadPinName: "Motor_output_M+(screw)" }
+      - { id: PIN1_RPWM, label: "Pin 1 - R-PWM", kicadPinName: "Pin1-R-PWM" }
+      - { id: PIN2_LPWM, label: "Pin 2 - L-PWM", kicadPinName: "Pin2-L-PWM" }
+      - { id: PIN3_REN, label: "Pin 3 - R-EN", kicadPinName: "Pin3-R-EN" }
+      - { id: PIN4_LEN, label: "Pin 4 - L-EN", kicadPinName: "Pin4-L-EN" }
+      - { id: PIN7_VCC, label: "Pin 7 - VCC", kicadPinName: "Pin7-VCC" }
+      - { id: PIN8_GND, label: "Pin 8 - GND", kicadPinName: "Pin8-GND" }
 
   - id: BTS2
     componentType: offBoard
@@ -320,16 +368,16 @@ components:
     model: "BTS7960/IBT_2"
     notes: "Drives left-side motors (M2, M4, M6) via tb-motor-bus."
     connectionPoints:
-      - { id: "B-", label: "Motor supply B- (screw terminal)" }
-      - { id: "B+", label: "Motor supply B+ (screw terminal)" }
-      - { id: "M-", label: "Motor output M- (screw terminal)" }
-      - { id: "M+", label: "Motor output M+ (screw terminal)" }
-      - { id: PIN1_RPWM, label: "Pin 1 - R-PWM" }
-      - { id: PIN2_LPWM, label: "Pin 2 - L-PWM" }
-      - { id: PIN3_REN, label: "Pin 3 - R-EN" }
-      - { id: PIN4_LEN, label: "Pin 4 - L-EN" }
-      - { id: PIN7_VCC, label: "Pin 7 - VCC" }
-      - { id: PIN8_GND, label: "Pin 8 - GND" }
+      - { id: "B-", label: "Motor supply B- (screw terminal)", kicadPinName: "Motor_supply_B-(screw)" }
+      - { id: "B+", label: "Motor supply B+ (screw terminal)", kicadPinName: "Motor_supply_B+(screw)" }
+      - { id: "M-", label: "Motor output M- (screw terminal)", kicadPinName: "Motor_output_M-(screw)" }
+      - { id: "M+", label: "Motor output M+ (screw terminal)", kicadPinName: "Motor_output_M+(screw)" }
+      - { id: PIN1_RPWM, label: "Pin 1 - R-PWM", kicadPinName: "Pin1-R-PWM" }
+      - { id: PIN2_LPWM, label: "Pin 2 - L-PWM", kicadPinName: "Pin2-L-PWM" }
+      - { id: PIN3_REN, label: "Pin 3 - R-EN", kicadPinName: "Pin3-R-EN" }
+      - { id: PIN4_LEN, label: "Pin 4 - L-EN", kicadPinName: "Pin4-L-EN" }
+      - { id: PIN7_VCC, label: "Pin 7 - VCC", kicadPinName: "Pin7-VCC" }
+      - { id: PIN8_GND, label: "Pin 8 - GND", kicadPinName: "Pin8-GND" }
 
   # --- off-board component: 6V/8A UBEC (servo power) ----------------------
   # Input comes straight from tb-power-dist (bypasses the board, like
@@ -343,12 +391,16 @@ components:
     connectionPoints:
       - id: IN+
         label: "Input + (red wire)"
+        kicadPinName: "U1-IN-POS"
       - id: IN-
         label: "Input - (black wire)"
+        kicadPinName: "U1-IN-NEG"
       - id: OUT+
         label: "Output + (6V)"
+        kicadPinName: "U1-6VOUT-POS"
       - id: OUT-
         label: "Output - (6V)"
+        kicadPinName: "U1-6VOUT-NEG"
 
   # --- off-board component: ELRS receiver ---------------------------------
   # RadioMaster RP3-V2. Wire colors per docs/elrs-wiring.md: red=VCC,
@@ -361,12 +413,16 @@ components:
     connectionPoints:
       - id: VCC
         label: "VCC (red wire)"
+        kicadPinName: "VCC_(red)"
       - id: GND
         label: "GND (black wire)"
+        kicadPinName: "GND_(black)"
       - id: TX
         label: "TX - receiver output (green wire)"
+        kicadPinName: "TX-rcv_out(green)"
       - id: RX
         label: "RX - receiver input (white wire)"
+        kicadPinName: "RX-rcv_in(white)"
 
   # --- off-board components: motors ---------------------------------------
   # Shells only — wiring to tb-motor-bus not yet defined.
@@ -376,48 +432,48 @@ components:
     model: "GA25 DC gear motor"
     notes: ""
     connectionPoints:
-      - { id: "+", label: "Motor +" }
-      - { id: "-", label: "Motor -" }
+      - { id: "+", label: "Motor +", kicadPinName: "Motor_+" }
+      - { id: "-", label: "Motor -", kicadPinName: "Motor_-" }
   - id: M2
     componentType: offBoard
     name: "Motor 2 (Left - Wheel 2)"
     model: "GA25 DC gear motor"
     notes: ""
     connectionPoints:
-      - { id: "+", label: "Motor +" }
-      - { id: "-", label: "Motor -" }
+      - { id: "+", label: "Motor +", kicadPinName: "Motor_+" }
+      - { id: "-", label: "Motor -", kicadPinName: "Motor_-" }
   - id: M3
     componentType: offBoard
     name: "Motor 3 (Right - Wheel 3)"
     model: "GA25 DC gear motor"
     notes: ""
     connectionPoints:
-      - { id: "+", label: "Motor +" }
-      - { id: "-", label: "Motor -" }
+      - { id: "+", label: "Motor +", kicadPinName: "Motor_+" }
+      - { id: "-", label: "Motor -", kicadPinName: "Motor_-" }
   - id: M4
     componentType: offBoard
     name: "Motor 4 (Left - Wheel 4)"
     model: "GA25 DC gear motor"
     notes: ""
     connectionPoints:
-      - { id: "+", label: "Motor +" }
-      - { id: "-", label: "Motor -" }
+      - { id: "+", label: "Motor +", kicadPinName: "Motor_+" }
+      - { id: "-", label: "Motor -", kicadPinName: "Motor_-" }
   - id: M5
     componentType: offBoard
     name: "Motor 5 (Right - Wheel 5)"
     model: "GA25 DC gear motor"
     notes: ""
     connectionPoints:
-      - { id: "+", label: "Motor +" }
-      - { id: "-", label: "Motor -" }
+      - { id: "+", label: "Motor +", kicadPinName: "Motor_+" }
+      - { id: "-", label: "Motor -", kicadPinName: "Motor_-" }
   - id: M6
     componentType: offBoard
     name: "Motor 6 (Left - Wheel 6)"
     model: "GA25 DC gear motor"
     notes: ""
     connectionPoints:
-      - { id: "+", label: "Motor +" }
-      - { id: "-", label: "Motor -" }
+      - { id: "+", label: "Motor +", kicadPinName: "Motor_+" }
+      - { id: "-", label: "Motor -", kicadPinName: "Motor_-" }
 
   # --- off-board components: servos ---------------------------------------
   # Shells only — power bus and board connectors not yet defined
@@ -428,36 +484,36 @@ components:
     model: "MS24 servo"
     notes: ""
     connectionPoints:
-      - { id: SIG, label: "Signal (GPIO42, per ESP32 wiring instructions)" }
-      - { id: PWR, label: "Power (6V)" }
-      - { id: GND, label: "Ground" }
+      - { id: SIG, label: "Signal (GPIO42, per ESP32 wiring instructions)", kicadPinName: "Signal(GPIO42)" }
+      - { id: PWR, label: "Power (6V)", kicadPinName: "Power(6V)" }
+      - { id: GND, label: "Ground", kicadPinName: "Ground" }
   - id: S2
     componentType: offBoard
     name: "Servo 2 (Left-Front - Wheel 2)"
     model: "MS24 servo"
     notes: ""
     connectionPoints:
-      - { id: SIG, label: "Signal (GPIO7, per ESP32 wiring instructions)" }
-      - { id: PWR, label: "Power (6V)" }
-      - { id: GND, label: "Ground" }
+      - { id: SIG, label: "Signal (GPIO7, per ESP32 wiring instructions)", kicadPinName: "Signal(GPIO7)" }
+      - { id: PWR, label: "Power (6V)", kicadPinName: "Power(6V)" }
+      - { id: GND, label: "Ground", kicadPinName: "Ground" }
   - id: S3
     componentType: offBoard
     name: "Servo 3 (Right-Rear - Wheel 5)"
     model: "MS24 servo"
     notes: ""
     connectionPoints:
-      - { id: SIG, label: "Signal (GPIO41, per ESP32 wiring instructions)" }
-      - { id: PWR, label: "Power (6V)" }
-      - { id: GND, label: "Ground" }
+      - { id: SIG, label: "Signal (GPIO41, per ESP32 wiring instructions)", kicadPinName: "Signal(GPIO41)" }
+      - { id: PWR, label: "Power (6V)", kicadPinName: "Power(6V)" }
+      - { id: GND, label: "Ground", kicadPinName: "Ground" }
   - id: S4
     componentType: offBoard
     name: "Servo 4 (Left-Rear - Wheel 6)"
     model: "MS24 servo"
     notes: ""
     connectionPoints:
-      - { id: SIG, label: "Signal (GPIO38, per ESP32 wiring instructions)" }
-      - { id: PWR, label: "Power (6V)" }
-      - { id: GND, label: "Ground" }
+      - { id: SIG, label: "Signal (GPIO38, per ESP32 wiring instructions)", kicadPinName: "Signal(GPIO38)" }
+      - { id: PWR, label: "Power (6V)", kicadPinName: "Power(6V)" }
+      - { id: GND, label: "Ground", kicadPinName: "Ground" }
 
   # --- board (custom PCB) -----------------------------------------------------
   # The physical board being designed in KiCad. Its connection points are
@@ -478,9 +534,11 @@ components:
       # is just the module's own name, not the voltage present at J1.
       - id: J1.1
         label: "Main battery power IN (raw 3S voltage, feeds UBEC 5V/3A input)"
+        kicadPinName: "Main_power_IN(feeds_U2)"
         connector: { type: screwTerminal, notes: "High-current feed — size terminal/pad for total downstream current" }
       - id: J1.2
         label: "" # e.g. "GND"
+        kicadPinName: "J1.2"
         connector: { type: screwTerminal }
       # Example: a socket header the ESP32 module plugs into, plus a
       # header pin that routes on (via internal trace) to a servo
@@ -488,158 +546,206 @@ components:
       # -> board-connector pattern discussed for the ESP32.
       - id: J_ESP32.7
         label: "ESP32 GPIO7 (socket pin)"
+        kicadPinName: "ESP32_GPIO7-S2-LF-signal(socket)"
         connector: { type: socketHeader }
       - id: J_ESP32.5V
         label: "ESP32 5V IN (socket pin)"
+        kicadPinName: "ESP32_5V_IN_(socket_pin)"
         connector: { type: socketHeader }
       - id: J_ESP32.GND_1
         label: "ESP32 ground, near 5V IN (socket pin)"
+        kicadPinName: "ESP32_ground,_near_5V_IN_(socket_pin)"
         connector: { type: socketHeader }
       - id: J_ESP32.GND_2
         label: "ESP32 ground, near TX (socket pin)"
+        kicadPinName: "ESP32_ground_near_TX(socket_pin)"
         connector: { type: socketHeader }
       - id: J_ESP32.10
         label: "ESP32 GPIO10 - BTS2 pin 1, R-PWM (socket pin)"
+        kicadPinName: "ESP32_GPIO10-BTS2_pin1_R-PWM(socket)"
         connector: { type: socketHeader }
       - id: J_ESP32.11
         label: "ESP32 GPIO11 - BTS2 pin 2, L-PWM (socket pin)"
+        kicadPinName: "ESP32_GPIO11-BTS2_pin2_L-PWM(socket)"
         connector: { type: socketHeader }
       - id: J_ESP32.12
         label: "ESP32 GPIO12 - BTS1 pin 1, R-PWM (socket pin)"
+        kicadPinName: "ESP32_GPIO12-BTS1_pin1_R-PWM(socket)"
         connector: { type: socketHeader }
       - id: J_ESP32.13
         label: "ESP32 GPIO13 - BTS1 pin 2, L-PWM (socket pin)"
+        kicadPinName: "ESP32_GPIO13-BTS1_pin2_L-PWM(socket)"
         connector: { type: socketHeader }
       - id: J_ESP32.21
         label: "ESP32 GPIO21 - ELRS RX, white wire (socket pin)"
+        kicadPinName: "ESP32_GPIO21-ELRS_RX_white(socket)"
         connector: { type: socketHeader }
       - id: J_ESP32.47
         label: "ESP32 GPIO47 - ELRS TX, green wire (socket pin)"
+        kicadPinName: "ESP32_GPIO47-ELRS_TX_green(socket)"
         connector: { type: socketHeader }
       - id: J_ESP32.38
         label: "ESP32 GPIO38 - S4 (Left-Rear) servo signal (socket pin)"
+        kicadPinName: "ESP32_GPIO38-S4-LR_signal(socket)"
         connector: { type: socketHeader }
       - id: J_ESP32.41
         label: "ESP32 GPIO41 - S3 (Right-Rear) servo signal (socket pin)"
+        kicadPinName: "ESP32_GPIO41-S3-RR_signal(socket)"
         connector: { type: socketHeader }
       - id: J_ESP32.42
         label: "ESP32 GPIO42 - S1 (Right-Front) servo signal (socket pin)"
+        kicadPinName: "ESP32_GPIO42-S1-RF_signal(socket)"
         connector: { type: socketHeader }
       # Solder pads for the UBEC 5V/3A module (see u2 component).
       - id: J_UBEC5V.INP
         label: "UBEC 5V IN+ pad"
+        kicadPinName: "U2_5V_IN-POS"
         connector: { type: solderPad }
       - id: J_UBEC5V.INN
         label: "UBEC 5V IN- pad"
+        kicadPinName: "U2_5V_IN-NEG"
         connector: { type: solderPad }
       - id: J_UBEC5V.OUTP
         label: "UBEC 5V OUT+ pad"
+        kicadPinName: "U2_5V_OUT_POS"
         connector: { type: solderPad }
       - id: J_UBEC5V.OUTN
         label: "UBEC 5V OUT- pad"
+        kicadPinName: "U2_5V_OUT-NEG"
         connector: { type: solderPad }
       # BTS1/BTS2 low-current logic pin headers (see BTS1/BTS2 components).
       # Pins 3/4/7 (R-EN, L-EN, VCC) ride the 5V bus; pin 8 (GND) rides
       # the ground bus — see bondedGroups below.
       - id: J_BTS1.1
         label: "BTS1 pin 1 - R-PWM"
+        kicadPinName: "BTS1_pin1-R-PWM"
         connector: { type: pinHeader }
       - id: J_BTS1.2
         label: "BTS1 pin 2 - L-PWM"
+        kicadPinName: "BTS1_pin2-L-PWM"
         connector: { type: pinHeader }
       - id: J_BTS1.3
         label: "BTS1 pin 3 - R-EN (5V bus)"
+        kicadPinName: "BTS1_pin3-R-EN(5V)"
         connector: { type: pinHeader }
       - id: J_BTS1.4
         label: "BTS1 pin 4 - L-EN (5V bus)"
+        kicadPinName: "BTS1_pin4-L-EN(5V)"
         connector: { type: pinHeader }
       - id: J_BTS1.7
         label: "BTS1 pin 7 - VCC (5V bus)"
+        kicadPinName: "BTS1_pin7-VCC(5V)"
         connector: { type: pinHeader }
       - id: J_BTS1.8
         label: "BTS1 pin 8 - GND (ground bus)"
+        kicadPinName: "BTS1_pin8-GND"
         connector: { type: pinHeader }
       - id: J_BTS2.1
         label: "BTS2 pin 1 - R-PWM"
+        kicadPinName: "BTS2_pin1-R-PWM"
         connector: { type: pinHeader }
       - id: J_BTS2.2
         label: "BTS2 pin 2 - L-PWM"
+        kicadPinName: "BTS2_pin2-L-PWM"
         connector: { type: pinHeader }
       - id: J_BTS2.3
         label: "BTS2 pin 3 - R-EN (5V bus)"
+        kicadPinName: "BTS2_pin3-R-EN(5V)"
         connector: { type: pinHeader }
       - id: J_BTS2.4
         label: "BTS2 pin 4 - L-EN (5V bus)"
+        kicadPinName: "BTS2_pin4-L-EN(5V)"
         connector: { type: pinHeader }
       - id: J_BTS2.7
         label: "BTS2 pin 7 - VCC (5V bus)"
+        kicadPinName: "BTS2_pin7-VCC(5V)"
         connector: { type: pinHeader }
       - id: J_BTS2.8
         label: "BTS2 pin 8 - GND (ground bus)"
+        kicadPinName: "BTS2_pin8-GND"
         connector: { type: pinHeader }
       # Single 4-pin header for the ELRS receiver (VCC/GND/TX/RX together,
       # matching its own 4-wire red/black/green/white pigtail).
       - id: J_ELRS.VCC
         label: "ELRS VCC (5V bus)"
+        kicadPinName: "ELRS_VCC(5V)"
         connector: { type: pinHeader }
       - id: J_ELRS.GND
         label: "ELRS GND (ground bus)"
+        kicadPinName: "ELRS_GND"
         connector: { type: pinHeader }
       - id: J_ELRS.TX
         label: "ELRS TX (green wire)"
+        kicadPinName: "ELRS_TX(green)"
         connector: { type: pinHeader }
       - id: J_ELRS.RX
         label: "ELRS RX (white wire)"
+        kicadPinName: "ELRS_RX(white)"
         connector: { type: pinHeader }
       # Master ground return to tb-power-dist.B14 — see bus-gnd bondedGroup.
       - id: J_GND_MASTER
         label: "Master ground OUT (to tb-power-dist.B14)"
+        kicadPinName: "Master_GND_OUT(to_B14)"
         connector: { type: screwTerminal }
       # UBEC 6V/8A (U1) output screw terminals — feed the servo power bus.
       - id: J_UBEC6V.OUTP
         label: "UBEC 6V OUT+ (servo power bus)"
+        kicadPinName: "U1_6V_OUT(servo_+)"
         connector: { type: screwTerminal }
       - id: J_UBEC6V.OUTN
         label: "UBEC 6V OUT- (servo power bus return)"
+        kicadPinName: "U1_6V_OUT(servo_GND)"
         connector: { type: screwTerminal }
       # Per-servo 3-pin headers, physical pin order Black(GND)-Red(PWR)-White(SIG),
       # matching each servo's own connector. PWR joins bus-6v, GND joins bus-gnd,
       # SIG gets its own trace from the matching ESP32 socket pin.
       - id: J_S1.GND
         label: "S1 header pin 1 - GND (black)"
+        kicadPinName: "S1_pin1-GND(black)"
         connector: { type: pinHeader }
       - id: J_S1.PWR
         label: "S1 header pin 2 - PWR (red)"
+        kicadPinName: "S1_pin2-PWR(red)"
         connector: { type: pinHeader }
       - id: J_S1.SIG
         label: "S1 header pin 3 - SIG (white)"
+        kicadPinName: "S1_pin3-SIG(white)"
         connector: { type: pinHeader }
       - id: J_S2.GND
         label: "S2 header pin 1 - GND (black)"
+        kicadPinName: "S2_pin1-GND(black)"
         connector: { type: pinHeader }
       - id: J_S2.PWR
         label: "S2 header pin 2 - PWR (red)"
+        kicadPinName: "S2_pin2-PWR(red)"
         connector: { type: pinHeader }
       - id: J_S2.SIG
         label: "S2 header pin 3 - SIG (white)"
+        kicadPinName: "S2_pin3-SIG(white)"
         connector: { type: pinHeader }
       - id: J_S3.GND
         label: "S3 header pin 1 - GND (black)"
+        kicadPinName: "S3_pin1-GND(black)"
         connector: { type: pinHeader }
       - id: J_S3.PWR
         label: "S3 header pin 2 - PWR (red)"
+        kicadPinName: "S3_pin2-PWR(red)"
         connector: { type: pinHeader }
       - id: J_S3.SIG
         label: "S3 header pin 3 - SIG (white)"
+        kicadPinName: "S3_pin3-SIG(white)"
         connector: { type: pinHeader }
       - id: J_S4.GND
         label: "S4 header pin 1 - GND (black)"
+        kicadPinName: "S4_pin1-GND(black)"
         connector: { type: pinHeader }
       - id: J_S4.PWR
         label: "S4 header pin 2 - PWR (red)"
+        kicadPinName: "S4_pin2-PWR(red)"
         connector: { type: pinHeader }
       - id: J_S4.SIG
         label: "S4 header pin 3 - SIG (white)"
+        kicadPinName: "S4_pin3-SIG(white)"
         connector: { type: pinHeader }
     bondedGroups:
       - id: bus-5v

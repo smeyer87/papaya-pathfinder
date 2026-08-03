@@ -197,7 +197,7 @@ def build_placements(data):
         ref = assign_ref(comp["id"], comp["componentType"], counters)
         pins = []
         for cp in comp.get("connectionPoints", []):
-            label = cp.get("label") or cp["id"]
+            label = cp.get("kicadPinName") or cp.get("label") or cp["id"]
             pins.append((str(cp["id"]), str(label)))
             pin_lookup[(comp["id"], cp["id"])] = (ref, str(cp["id"]))
         placements.append(
@@ -218,7 +218,7 @@ def build_placements(data):
             if prefix not in groups:
                 groups[prefix] = []
                 groups_order.append(prefix)
-            groups[prefix].append((suffix, cp.get("label") or cp["id"], cp["id"]))
+            groups[prefix].append((suffix, cp.get("kicadPinName") or cp.get("label") or cp["id"], cp["id"]))
 
         j_counter = 0
         for prefix in groups_order:

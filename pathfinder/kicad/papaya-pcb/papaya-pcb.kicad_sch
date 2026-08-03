@@ -5803,7 +5803,7 @@
 	)
 	(wire
 		(pts
-			(xy 205.74 259.08) (xy 214.63 259.08)
+			(xy 217.17 261.62) (xy 226.06 261.62)
 		)
 		(stroke
 			(width 0)
@@ -5990,6 +5990,16 @@
 			(type default)
 		)
 		(uuid "4ed8a7ca-0d91-4c00-9d30-939ed0a6592a")
+	)
+	(wire
+		(pts
+			(xy 184.15 264.16) (xy 186.69 264.16)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "51017751-a6d5-4ac3-af4c-4b939c473bcd")
 	)
 	(wire
 		(pts
@@ -6183,7 +6193,7 @@
 	)
 	(wire
 		(pts
-			(xy 205.74 256.54) (xy 214.63 256.54)
+			(xy 217.17 259.08) (xy 226.06 259.08)
 		)
 		(stroke
 			(width 0)
@@ -6423,16 +6433,6 @@
 	)
 	(wire
 		(pts
-			(xy 156.21 261.62) (xy 175.26 261.62)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "91c48752-6f1d-4375-85fe-af04069e48f4")
-	)
-	(wire
-		(pts
 			(xy 412.75 45.72) (xy 417.83 45.72)
 		)
 		(stroke
@@ -6523,7 +6523,7 @@
 	)
 	(wire
 		(pts
-			(xy 175.26 254) (xy 172.72 254)
+			(xy 186.69 256.54) (xy 184.15 256.54)
 		)
 		(stroke
 			(width 0)
@@ -7053,6 +7053,16 @@
 	)
 	(wire
 		(pts
+			(xy 156.21 261.62) (xy 162.56 261.62)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "f8b42ca5-f450-49b3-850c-0b3c0aaa4a3c")
+	)
+	(wire
+		(pts
 			(xy 175.26 113.03) (xy 181.61 113.03)
 		)
 		(stroke
@@ -7302,7 +7312,7 @@
 		(uuid "241c682a-02b4-448a-b2c3-b14258668695")
 	)
 	(label "NET_BUS_5V"
-		(at 214.63 259.08 0)
+		(at 226.06 261.62 0)
 		(effects
 			(font
 				(size 1.27 1.27)
@@ -7542,7 +7552,7 @@
 		(uuid "5c9763bd-a41f-479e-8cee-731c19340146")
 	)
 	(label "NET_B_BUS"
-		(at 172.72 254 180)
+		(at 184.15 256.54 180)
 		(effects
 			(font
 				(size 1.27 1.27)
@@ -7610,6 +7620,16 @@
 			(justify left bottom)
 		)
 		(uuid "65903d1a-d542-4014-8439-961fdd34cb1f")
+	)
+	(label "NET_B_BUS"
+		(at 162.56 261.62 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "6672d694-0d5a-4fe8-a931-71ba24496a29")
 	)
 	(label "NET_BUS_5V"
 		(at 181.61 113.03 0)
@@ -8111,6 +8131,16 @@
 		)
 		(uuid "aea20e09-fb5a-4323-a161-5ac660bc12ce")
 	)
+	(label "NET_A_BUS"
+		(at 184.15 264.16 180)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right bottom)
+		)
+		(uuid "b2f573c1-9b52-4108-9ce3-c8de970dfc0b")
+	)
 	(label "NET_RIGHT_POWER"
 		(at 374.65 50.8 180)
 		(effects
@@ -8502,7 +8532,7 @@
 		(uuid "f208b2ab-3640-46c4-8c71-fadbdcb519b1")
 	)
 	(label "NET_B_BUS"
-		(at 214.63 256.54 0)
+		(at 226.06 259.08 0)
 		(effects
 			(font
 				(size 1.27 1.27)
@@ -10866,7 +10896,7 @@
 	)
 	(symbol
 		(lib_id "AUTO:J3")
-		(at 190.5 257.81 0)
+		(at 201.93 260.35 0)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -10876,7 +10906,7 @@
 		(dnp no)
 		(uuid "dfbfbc78-54f4-4c53-bf57-b8641573bf3b")
 		(property "Reference" "J3"
-			(at 190.5 242.57 0)
+			(at 201.93 245.11 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -10886,7 +10916,7 @@
 			)
 		)
 		(property "Value" "J_UBEC5V (4 pins)"
-			(at 190.5 273.05 0)
+			(at 201.93 275.59 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -10896,7 +10926,7 @@
 			)
 		)
 		(property "Footprint" ""
-			(at 190.5 257.81 0)
+			(at 201.93 260.35 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -10907,7 +10937,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 190.5 257.81 0)
+			(at 201.93 260.35 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -10918,7 +10948,7 @@
 			)
 		)
 		(property "Description" ""
-			(at 190.5 257.81 0)
+			(at 201.93 260.35 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
