@@ -207,6 +207,7 @@ def build_placements(data):
                 "pins": pins,
                 "on_board": False,
                 "yaml_id": comp["id"],
+                "footprint": "",
             }
         )
 
@@ -218,13 +219,15 @@ def build_placements(data):
             if prefix not in groups:
                 groups[prefix] = []
                 groups_order.append(prefix)
-            groups[prefix].append((suffix, cp.get("kicadPinName") or cp.get("label") or cp["id"], cp["id"]))
+            footprint = cp.get("connector", {}).get("footprint", "")
+            groups[prefix].append((suffix, cp.get("kicadPinName") or cp.get("label") or cp["id"], cp["id"], footprint))
 
         j_counter = 0
         for prefix in groups_order:
             j_counter += 1
             ref = f"J{j_counter}"
-            pins = [(suffix, str(label)) for suffix, label, _ in groups[prefix]]
+            pins = [(suffix, str(label)) for suffix, label, _, _ in groups[prefix]]
+            footprint = next((fp for _, _, _, fp in groups[prefix] if fp), "")
             placements.append(
                 {
                     "ref": ref,
@@ -232,9 +235,10 @@ def build_placements(data):
                     "pins": pins,
                     "on_board": True,
                     "yaml_id": prefix,
+                    "footprint": footprint,
                 }
             )
-            for suffix, _, full_id in groups[prefix]:
+            for suffix, _, full_id, _ in groups[prefix]:
                 pin_lookup[(board_comp["id"], full_id)] = (ref, suffix)
 
     return placements, pin_lookup
@@ -309,7 +313,7 @@ def build_lib_symbol(placement):
         S("on_board", Bare("yes") if placement["on_board"] else Bare("no")),
         S("property", "Reference", placement["ref"][0], S("at", 0, half_h + 2.54, 0), S("effects", S("font", S("size", 1.27, 1.27)))),
         S("property", "Value", placement["value"], S("at", 0, -half_h - 2.54, 0), S("effects", S("font", S("size", 1.27, 1.27)))),
-        S("property", "Footprint", "", S("at", 0, 0, 0), S("effects", S("font", S("size", 1.27, 1.27)), Bare("hide"))),
+        S("property", "Footprint", placement.get("footprint", ""), S("at", 0, 0, 0), S("effects", S("font", S("size", 1.27, 1.27)), Bare("hide"))),
         S("property", "Datasheet", "", S("at", 0, 0, 0), S("effects", S("font", S("size", 1.27, 1.27)), Bare("hide"))),
         S("property", "YAML_Id", placement["yaml_id"], S("at", 0, 0, 0), S("effects", S("font", S("size", 1.27, 1.27)), Bare("hide"))),
         body,
@@ -326,7 +330,7 @@ def build_instance(placement, x, y, project_name, root_path, pin_geom):
     props = [
         S("property", "Reference", ref, S("at", x, y - 15.24, 0), S("effects", S("font", S("size", 1.27, 1.27)))),
         S("property", "Value", placement["value"], S("at", x, y + 15.24, 0), S("effects", S("font", S("size", 1.27, 1.27)))),
-        S("property", "Footprint", "", S("at", x, y, 0), S("effects", S("font", S("size", 1.27, 1.27)), Bare("hide"))),
+        S("property", "Footprint", placement.get("footprint", ""), S("at", x, y, 0), S("effects", S("font", S("size", 1.27, 1.27)), Bare("hide"))),
         S("property", "Datasheet", "", S("at", x, y, 0), S("effects", S("font", S("size", 1.27, 1.27)), Bare("hide"))),
     ]
     pins = [S("pin", num, S("uuid", new_uuid())) for num in pin_geom]

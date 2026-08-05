@@ -535,11 +535,11 @@ components:
       - id: J1.1
         label: "Main battery power IN (raw 3S voltage, feeds UBEC 5V/3A input)"
         kicadPinName: "Main_power_IN(feeds_U2)"
-        connector: { type: screwTerminal, notes: "High-current feed — size terminal/pad for total downstream current" }
+        connector: {type: screwTerminal, notes: "High-current feed — size terminal/pad for total downstream current", footprint: "TerminalBlock:TerminalBlock_MaiXu_MX126-5.0-02P_1x02_P5.00mm" }
       - id: J1.2
         label: "" # e.g. "GND"
         kicadPinName: "J1.2"
-        connector: { type: screwTerminal }
+        connector: {type: screwTerminal, footprint: "TerminalBlock:TerminalBlock_MaiXu_MX126-5.0-02P_1x02_P5.00mm" }
       # Example: a socket header the ESP32 module plugs into, plus a
       # header pin that routes on (via internal trace) to a servo
       # connector — illustrates the offBoard-module -> board-connector
@@ -547,206 +547,206 @@ components:
       - id: J_ESP32.7
         label: "ESP32 GPIO7 (socket pin)"
         kicadPinName: "ESP32_GPIO7-S2-LF-signal(socket)"
-        connector: { type: socketHeader }
+        connector: {type: socketHeader, footprint: "Connector_PinSocket_2.54mm:PinSocket_2x22_P2.54mm_Vertical" }
       - id: J_ESP32.5V
         label: "ESP32 5V IN (socket pin)"
         kicadPinName: "ESP32_5V_IN_(socket_pin)"
-        connector: { type: socketHeader }
+        connector: {type: socketHeader, footprint: "Connector_PinSocket_2.54mm:PinSocket_2x22_P2.54mm_Vertical" }
       - id: J_ESP32.GND_1
         label: "ESP32 ground, near 5V IN (socket pin)"
         kicadPinName: "ESP32_ground,_near_5V_IN_(socket_pin)"
-        connector: { type: socketHeader }
+        connector: {type: socketHeader, footprint: "Connector_PinSocket_2.54mm:PinSocket_2x22_P2.54mm_Vertical" }
       - id: J_ESP32.GND_2
         label: "ESP32 ground, near TX (socket pin)"
         kicadPinName: "ESP32_ground_near_TX(socket_pin)"
-        connector: { type: socketHeader }
+        connector: {type: socketHeader, footprint: "Connector_PinSocket_2.54mm:PinSocket_2x22_P2.54mm_Vertical" }
       - id: J_ESP32.10
         label: "ESP32 GPIO10 - BTS2 pin 1, R-PWM (socket pin)"
         kicadPinName: "ESP32_GPIO10-BTS2_pin1_R-PWM(socket)"
-        connector: { type: socketHeader }
+        connector: {type: socketHeader, footprint: "Connector_PinSocket_2.54mm:PinSocket_2x22_P2.54mm_Vertical" }
       - id: J_ESP32.11
         label: "ESP32 GPIO11 - BTS2 pin 2, L-PWM (socket pin)"
         kicadPinName: "ESP32_GPIO11-BTS2_pin2_L-PWM(socket)"
-        connector: { type: socketHeader }
+        connector: {type: socketHeader, footprint: "Connector_PinSocket_2.54mm:PinSocket_2x22_P2.54mm_Vertical" }
       - id: J_ESP32.12
         label: "ESP32 GPIO12 - BTS1 pin 1, R-PWM (socket pin)"
         kicadPinName: "ESP32_GPIO12-BTS1_pin1_R-PWM(socket)"
-        connector: { type: socketHeader }
+        connector: {type: socketHeader, footprint: "Connector_PinSocket_2.54mm:PinSocket_2x22_P2.54mm_Vertical" }
       - id: J_ESP32.13
         label: "ESP32 GPIO13 - BTS1 pin 2, L-PWM (socket pin)"
         kicadPinName: "ESP32_GPIO13-BTS1_pin2_L-PWM(socket)"
-        connector: { type: socketHeader }
+        connector: {type: socketHeader, footprint: "Connector_PinSocket_2.54mm:PinSocket_2x22_P2.54mm_Vertical" }
       - id: J_ESP32.21
         label: "ESP32 GPIO21 - ELRS RX, white wire (socket pin)"
         kicadPinName: "ESP32_GPIO21-ELRS_RX_white(socket)"
-        connector: { type: socketHeader }
+        connector: {type: socketHeader, footprint: "Connector_PinSocket_2.54mm:PinSocket_2x22_P2.54mm_Vertical" }
       - id: J_ESP32.47
         label: "ESP32 GPIO47 - ELRS TX, green wire (socket pin)"
         kicadPinName: "ESP32_GPIO47-ELRS_TX_green(socket)"
-        connector: { type: socketHeader }
+        connector: {type: socketHeader, footprint: "Connector_PinSocket_2.54mm:PinSocket_2x22_P2.54mm_Vertical" }
       - id: J_ESP32.38
         label: "ESP32 GPIO38 - S4 (Left-Rear) servo signal (socket pin)"
         kicadPinName: "ESP32_GPIO38-S4-LR_signal(socket)"
-        connector: { type: socketHeader }
+        connector: {type: socketHeader, footprint: "Connector_PinSocket_2.54mm:PinSocket_2x22_P2.54mm_Vertical" }
       - id: J_ESP32.41
         label: "ESP32 GPIO41 - S3 (Right-Rear) servo signal (socket pin)"
         kicadPinName: "ESP32_GPIO41-S3-RR_signal(socket)"
-        connector: { type: socketHeader }
+        connector: {type: socketHeader, footprint: "Connector_PinSocket_2.54mm:PinSocket_2x22_P2.54mm_Vertical" }
       - id: J_ESP32.42
         label: "ESP32 GPIO42 - S1 (Right-Front) servo signal (socket pin)"
         kicadPinName: "ESP32_GPIO42-S1-RF_signal(socket)"
-        connector: { type: socketHeader }
+        connector: {type: socketHeader, footprint: "Connector_PinSocket_2.54mm:PinSocket_2x22_P2.54mm_Vertical" }
       # Solder pads for the UBEC 5V/3A module (see u2 component).
       - id: J_UBEC5V.INP
         label: "UBEC 5V IN+ pad"
         kicadPinName: "U2_5V_IN-POS"
-        connector: { type: solderPad }
+        connector: {type: solderPad, footprint: "papaya-pcb:UBEC_5V_3A_10x15mm" }
       - id: J_UBEC5V.INN
         label: "UBEC 5V IN- pad"
         kicadPinName: "U2_5V_IN-NEG"
-        connector: { type: solderPad }
+        connector: {type: solderPad, footprint: "papaya-pcb:UBEC_5V_3A_10x15mm" }
       - id: J_UBEC5V.OUTP
         label: "UBEC 5V OUT+ pad"
         kicadPinName: "U2_5V_OUT_POS"
-        connector: { type: solderPad }
+        connector: {type: solderPad, footprint: "papaya-pcb:UBEC_5V_3A_10x15mm" }
       - id: J_UBEC5V.OUTN
         label: "UBEC 5V OUT- pad"
         kicadPinName: "U2_5V_OUT-NEG"
-        connector: { type: solderPad }
+        connector: {type: solderPad, footprint: "papaya-pcb:UBEC_5V_3A_10x15mm" }
       # BTS1/BTS2 low-current logic pin headers (see BTS1/BTS2 components).
       # Pins 3/4/7 (R-EN, L-EN, VCC) ride the 5V bus; pin 8 (GND) rides
       # the ground bus — see bondedGroups below.
       - id: J_BTS1.1
         label: "BTS1 pin 1 - R-PWM"
         kicadPinName: "BTS1_pin1-R-PWM"
-        connector: { type: pinHeader }
+        connector: {type: pinHeader, footprint: "Connector_PinHeader_2.54mm:PinHeader_1x06_P2.54mm_Vertical" }
       - id: J_BTS1.2
         label: "BTS1 pin 2 - L-PWM"
         kicadPinName: "BTS1_pin2-L-PWM"
-        connector: { type: pinHeader }
+        connector: {type: pinHeader, footprint: "Connector_PinHeader_2.54mm:PinHeader_1x06_P2.54mm_Vertical" }
       - id: J_BTS1.3
         label: "BTS1 pin 3 - R-EN (5V bus)"
         kicadPinName: "BTS1_pin3-R-EN(5V)"
-        connector: { type: pinHeader }
+        connector: {type: pinHeader, footprint: "Connector_PinHeader_2.54mm:PinHeader_1x06_P2.54mm_Vertical" }
       - id: J_BTS1.4
         label: "BTS1 pin 4 - L-EN (5V bus)"
         kicadPinName: "BTS1_pin4-L-EN(5V)"
-        connector: { type: pinHeader }
+        connector: {type: pinHeader, footprint: "Connector_PinHeader_2.54mm:PinHeader_1x06_P2.54mm_Vertical" }
       - id: J_BTS1.7
         label: "BTS1 pin 7 - VCC (5V bus)"
         kicadPinName: "BTS1_pin7-VCC(5V)"
-        connector: { type: pinHeader }
+        connector: {type: pinHeader, footprint: "Connector_PinHeader_2.54mm:PinHeader_1x06_P2.54mm_Vertical" }
       - id: J_BTS1.8
         label: "BTS1 pin 8 - GND (ground bus)"
         kicadPinName: "BTS1_pin8-GND"
-        connector: { type: pinHeader }
+        connector: {type: pinHeader, footprint: "Connector_PinHeader_2.54mm:PinHeader_1x06_P2.54mm_Vertical" }
       - id: J_BTS2.1
         label: "BTS2 pin 1 - R-PWM"
         kicadPinName: "BTS2_pin1-R-PWM"
-        connector: { type: pinHeader }
+        connector: {type: pinHeader, footprint: "Connector_PinHeader_2.54mm:PinHeader_1x06_P2.54mm_Vertical" }
       - id: J_BTS2.2
         label: "BTS2 pin 2 - L-PWM"
         kicadPinName: "BTS2_pin2-L-PWM"
-        connector: { type: pinHeader }
+        connector: {type: pinHeader, footprint: "Connector_PinHeader_2.54mm:PinHeader_1x06_P2.54mm_Vertical" }
       - id: J_BTS2.3
         label: "BTS2 pin 3 - R-EN (5V bus)"
         kicadPinName: "BTS2_pin3-R-EN(5V)"
-        connector: { type: pinHeader }
+        connector: {type: pinHeader, footprint: "Connector_PinHeader_2.54mm:PinHeader_1x06_P2.54mm_Vertical" }
       - id: J_BTS2.4
         label: "BTS2 pin 4 - L-EN (5V bus)"
         kicadPinName: "BTS2_pin4-L-EN(5V)"
-        connector: { type: pinHeader }
+        connector: {type: pinHeader, footprint: "Connector_PinHeader_2.54mm:PinHeader_1x06_P2.54mm_Vertical" }
       - id: J_BTS2.7
         label: "BTS2 pin 7 - VCC (5V bus)"
         kicadPinName: "BTS2_pin7-VCC(5V)"
-        connector: { type: pinHeader }
+        connector: {type: pinHeader, footprint: "Connector_PinHeader_2.54mm:PinHeader_1x06_P2.54mm_Vertical" }
       - id: J_BTS2.8
         label: "BTS2 pin 8 - GND (ground bus)"
         kicadPinName: "BTS2_pin8-GND"
-        connector: { type: pinHeader }
+        connector: {type: pinHeader, footprint: "Connector_PinHeader_2.54mm:PinHeader_1x06_P2.54mm_Vertical" }
       # Single 4-pin header for the ELRS receiver (VCC/GND/TX/RX together,
       # matching its own 4-wire red/black/green/white pigtail).
       - id: J_ELRS.VCC
         label: "ELRS VCC (5V bus)"
         kicadPinName: "ELRS_VCC(5V)"
-        connector: { type: pinHeader }
+        connector: {type: pinHeader, footprint: "Connector_PinHeader_2.54mm:PinHeader_1x04_P2.54mm_Vertical" }
       - id: J_ELRS.GND
         label: "ELRS GND (ground bus)"
         kicadPinName: "ELRS_GND"
-        connector: { type: pinHeader }
+        connector: {type: pinHeader, footprint: "Connector_PinHeader_2.54mm:PinHeader_1x04_P2.54mm_Vertical" }
       - id: J_ELRS.TX
         label: "ELRS TX (green wire)"
         kicadPinName: "ELRS_TX(green)"
-        connector: { type: pinHeader }
+        connector: {type: pinHeader, footprint: "Connector_PinHeader_2.54mm:PinHeader_1x04_P2.54mm_Vertical" }
       - id: J_ELRS.RX
         label: "ELRS RX (white wire)"
         kicadPinName: "ELRS_RX(white)"
-        connector: { type: pinHeader }
+        connector: {type: pinHeader, footprint: "Connector_PinHeader_2.54mm:PinHeader_1x04_P2.54mm_Vertical" }
       # Master ground return to tb-power-dist.B14 — see bus-gnd bondedGroup.
       - id: J_GND_MASTER
         label: "Master ground OUT (to tb-power-dist.B14)"
         kicadPinName: "Master_GND_OUT(to_B14)"
-        connector: { type: screwTerminal }
+        connector: {type: screwTerminal, footprint: "TerminalBlock:TerminalBlock_MaiXu_MX126-5.0-02P_1x02_P5.00mm" }
       # UBEC 6V/8A (U1) output screw terminals — feed the servo power bus.
       - id: J_UBEC6V.OUTP
         label: "UBEC 6V OUT+ (servo power bus)"
         kicadPinName: "U1_6V_OUT(servo_+)"
-        connector: { type: screwTerminal }
+        connector: {type: screwTerminal, footprint: "TerminalBlock:TerminalBlock_MaiXu_MX126-5.0-02P_1x02_P5.00mm" }
       - id: J_UBEC6V.OUTN
         label: "UBEC 6V OUT- (servo power bus return)"
         kicadPinName: "U1_6V_OUT(servo_GND)"
-        connector: { type: screwTerminal }
+        connector: {type: screwTerminal, footprint: "TerminalBlock:TerminalBlock_MaiXu_MX126-5.0-02P_1x02_P5.00mm" }
       # Per-servo 3-pin headers, physical pin order Black(GND)-Red(PWR)-White(SIG),
       # matching each servo's own connector. PWR joins bus-6v, GND joins bus-gnd,
       # SIG gets its own trace from the matching ESP32 socket pin.
       - id: J_S1.GND
         label: "S1 header pin 1 - GND (black)"
         kicadPinName: "S1_pin1-GND(black)"
-        connector: { type: pinHeader }
+        connector: {type: pinHeader, footprint: "Connector_PinHeader_2.54mm:PinHeader_1x03_P2.54mm_Vertical" }
       - id: J_S1.PWR
         label: "S1 header pin 2 - PWR (red)"
         kicadPinName: "S1_pin2-PWR(red)"
-        connector: { type: pinHeader }
+        connector: {type: pinHeader, footprint: "Connector_PinHeader_2.54mm:PinHeader_1x03_P2.54mm_Vertical" }
       - id: J_S1.SIG
         label: "S1 header pin 3 - SIG (white)"
         kicadPinName: "S1_pin3-SIG(white)"
-        connector: { type: pinHeader }
+        connector: {type: pinHeader, footprint: "Connector_PinHeader_2.54mm:PinHeader_1x03_P2.54mm_Vertical" }
       - id: J_S2.GND
         label: "S2 header pin 1 - GND (black)"
         kicadPinName: "S2_pin1-GND(black)"
-        connector: { type: pinHeader }
+        connector: {type: pinHeader, footprint: "Connector_PinHeader_2.54mm:PinHeader_1x03_P2.54mm_Vertical" }
       - id: J_S2.PWR
         label: "S2 header pin 2 - PWR (red)"
         kicadPinName: "S2_pin2-PWR(red)"
-        connector: { type: pinHeader }
+        connector: {type: pinHeader, footprint: "Connector_PinHeader_2.54mm:PinHeader_1x03_P2.54mm_Vertical" }
       - id: J_S2.SIG
         label: "S2 header pin 3 - SIG (white)"
         kicadPinName: "S2_pin3-SIG(white)"
-        connector: { type: pinHeader }
+        connector: {type: pinHeader, footprint: "Connector_PinHeader_2.54mm:PinHeader_1x03_P2.54mm_Vertical" }
       - id: J_S3.GND
         label: "S3 header pin 1 - GND (black)"
         kicadPinName: "S3_pin1-GND(black)"
-        connector: { type: pinHeader }
+        connector: {type: pinHeader, footprint: "Connector_PinHeader_2.54mm:PinHeader_1x03_P2.54mm_Vertical" }
       - id: J_S3.PWR
         label: "S3 header pin 2 - PWR (red)"
         kicadPinName: "S3_pin2-PWR(red)"
-        connector: { type: pinHeader }
+        connector: {type: pinHeader, footprint: "Connector_PinHeader_2.54mm:PinHeader_1x03_P2.54mm_Vertical" }
       - id: J_S3.SIG
         label: "S3 header pin 3 - SIG (white)"
         kicadPinName: "S3_pin3-SIG(white)"
-        connector: { type: pinHeader }
+        connector: {type: pinHeader, footprint: "Connector_PinHeader_2.54mm:PinHeader_1x03_P2.54mm_Vertical" }
       - id: J_S4.GND
         label: "S4 header pin 1 - GND (black)"
         kicadPinName: "S4_pin1-GND(black)"
-        connector: { type: pinHeader }
+        connector: {type: pinHeader, footprint: "Connector_PinHeader_2.54mm:PinHeader_1x03_P2.54mm_Vertical" }
       - id: J_S4.PWR
         label: "S4 header pin 2 - PWR (red)"
         kicadPinName: "S4_pin2-PWR(red)"
-        connector: { type: pinHeader }
+        connector: {type: pinHeader, footprint: "Connector_PinHeader_2.54mm:PinHeader_1x03_P2.54mm_Vertical" }
       - id: J_S4.SIG
         label: "S4 header pin 3 - SIG (white)"
         kicadPinName: "S4_pin3-SIG(white)"
-        connector: { type: pinHeader }
+        connector: {type: pinHeader, footprint: "Connector_PinHeader_2.54mm:PinHeader_1x03_P2.54mm_Vertical" }
     bondedGroups:
       - id: bus-5v
         points: [J_UBEC5V.OUTP, J_ESP32.5V, J_BTS1.3, J_BTS1.4, J_BTS1.7, J_BTS2.3, J_BTS2.4, J_BTS2.7, J_ELRS.VCC]

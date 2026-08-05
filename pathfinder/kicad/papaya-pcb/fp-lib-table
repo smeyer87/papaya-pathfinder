@@ -1,0 +1,4 @@
+(fp_lib_table
+  (version 7)
+  (lib (name "papaya-pcb")(type "KiCad")(uri "${KIPRJMOD}/papaya-pcb.pretty")(options "")(descr "Project-local custom footprints for parts with no standard library match"))
+)
