@@ -547,55 +547,55 @@ components:
       - id: J_ESP32.7
         label: "ESP32 GPIO7 (socket pin)"
         kicadPinName: "ESP32_GPIO7-S2-LF-signal(socket)"
-        connector: {type: socketHeader, footprint: "Connector_PinSocket_2.54mm:PinSocket_2x22_P2.54mm_Vertical" }
+        connector: {type: socketHeader, footprint: "papaya-pcb:ESP32S3_DevKit_2x1x22_split" }
       - id: J_ESP32.5V
         label: "ESP32 5V IN (socket pin)"
         kicadPinName: "ESP32_5V_IN_(socket_pin)"
-        connector: {type: socketHeader, footprint: "Connector_PinSocket_2.54mm:PinSocket_2x22_P2.54mm_Vertical" }
+        connector: {type: socketHeader, footprint: "papaya-pcb:ESP32S3_DevKit_2x1x22_split" }
       - id: J_ESP32.GND_1
         label: "ESP32 ground, near 5V IN (socket pin)"
         kicadPinName: "ESP32_ground,_near_5V_IN_(socket_pin)"
-        connector: {type: socketHeader, footprint: "Connector_PinSocket_2.54mm:PinSocket_2x22_P2.54mm_Vertical" }
+        connector: {type: socketHeader, footprint: "papaya-pcb:ESP32S3_DevKit_2x1x22_split" }
       - id: J_ESP32.GND_2
         label: "ESP32 ground, near TX (socket pin)"
         kicadPinName: "ESP32_ground_near_TX(socket_pin)"
-        connector: {type: socketHeader, footprint: "Connector_PinSocket_2.54mm:PinSocket_2x22_P2.54mm_Vertical" }
+        connector: {type: socketHeader, footprint: "papaya-pcb:ESP32S3_DevKit_2x1x22_split" }
       - id: J_ESP32.10
         label: "ESP32 GPIO10 - BTS2 pin 1, R-PWM (socket pin)"
         kicadPinName: "ESP32_GPIO10-BTS2_pin1_R-PWM(socket)"
-        connector: {type: socketHeader, footprint: "Connector_PinSocket_2.54mm:PinSocket_2x22_P2.54mm_Vertical" }
+        connector: {type: socketHeader, footprint: "papaya-pcb:ESP32S3_DevKit_2x1x22_split" }
       - id: J_ESP32.11
         label: "ESP32 GPIO11 - BTS2 pin 2, L-PWM (socket pin)"
         kicadPinName: "ESP32_GPIO11-BTS2_pin2_L-PWM(socket)"
-        connector: {type: socketHeader, footprint: "Connector_PinSocket_2.54mm:PinSocket_2x22_P2.54mm_Vertical" }
+        connector: {type: socketHeader, footprint: "papaya-pcb:ESP32S3_DevKit_2x1x22_split" }
       - id: J_ESP32.12
         label: "ESP32 GPIO12 - BTS1 pin 1, R-PWM (socket pin)"
         kicadPinName: "ESP32_GPIO12-BTS1_pin1_R-PWM(socket)"
-        connector: {type: socketHeader, footprint: "Connector_PinSocket_2.54mm:PinSocket_2x22_P2.54mm_Vertical" }
+        connector: {type: socketHeader, footprint: "papaya-pcb:ESP32S3_DevKit_2x1x22_split" }
       - id: J_ESP32.13
         label: "ESP32 GPIO13 - BTS1 pin 2, L-PWM (socket pin)"
         kicadPinName: "ESP32_GPIO13-BTS1_pin2_L-PWM(socket)"
-        connector: {type: socketHeader, footprint: "Connector_PinSocket_2.54mm:PinSocket_2x22_P2.54mm_Vertical" }
+        connector: {type: socketHeader, footprint: "papaya-pcb:ESP32S3_DevKit_2x1x22_split" }
       - id: J_ESP32.21
         label: "ESP32 GPIO21 - ELRS RX, white wire (socket pin)"
         kicadPinName: "ESP32_GPIO21-ELRS_RX_white(socket)"
-        connector: {type: socketHeader, footprint: "Connector_PinSocket_2.54mm:PinSocket_2x22_P2.54mm_Vertical" }
+        connector: {type: socketHeader, footprint: "papaya-pcb:ESP32S3_DevKit_2x1x22_split" }
       - id: J_ESP32.47
         label: "ESP32 GPIO47 - ELRS TX, green wire (socket pin)"
         kicadPinName: "ESP32_GPIO47-ELRS_TX_green(socket)"
-        connector: {type: socketHeader, footprint: "Connector_PinSocket_2.54mm:PinSocket_2x22_P2.54mm_Vertical" }
+        connector: {type: socketHeader, footprint: "papaya-pcb:ESP32S3_DevKit_2x1x22_split" }
       - id: J_ESP32.38
         label: "ESP32 GPIO38 - S4 (Left-Rear) servo signal (socket pin)"
         kicadPinName: "ESP32_GPIO38-S4-LR_signal(socket)"
-        connector: {type: socketHeader, footprint: "Connector_PinSocket_2.54mm:PinSocket_2x22_P2.54mm_Vertical" }
+        connector: {type: socketHeader, footprint: "papaya-pcb:ESP32S3_DevKit_2x1x22_split" }
       - id: J_ESP32.41
         label: "ESP32 GPIO41 - S3 (Right-Rear) servo signal (socket pin)"
         kicadPinName: "ESP32_GPIO41-S3-RR_signal(socket)"
-        connector: {type: socketHeader, footprint: "Connector_PinSocket_2.54mm:PinSocket_2x22_P2.54mm_Vertical" }
+        connector: {type: socketHeader, footprint: "papaya-pcb:ESP32S3_DevKit_2x1x22_split" }
       - id: J_ESP32.42
         label: "ESP32 GPIO42 - S1 (Right-Front) servo signal (socket pin)"
         kicadPinName: "ESP32_GPIO42-S1-RF_signal(socket)"
-        connector: {type: socketHeader, footprint: "Connector_PinSocket_2.54mm:PinSocket_2x22_P2.54mm_Vertical" }
+        connector: {type: socketHeader, footprint: "papaya-pcb:ESP32S3_DevKit_2x1x22_split" }
       # Solder pads for the UBEC 5V/3A module (see u2 component).
       - id: J_UBEC5V.INP
         label: "UBEC 5V IN+ pad"

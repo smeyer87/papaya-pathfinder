@@ -24,7 +24,7 @@ SCH_PATH = REPO_ROOT / "pathfinder" / "kicad" / "papaya-pcb" / "papaya-pcb.kicad
 
 TERM_2POS = "TerminalBlock:TerminalBlock_MaiXu_MX126-5.0-02P_1x02_P5.00mm"
 PINHDR = lambda n: f"Connector_PinHeader_2.54mm:PinHeader_1x{n:02d}_P2.54mm_Vertical"
-SOCKET_2x22 = "Connector_PinSocket_2.54mm:PinSocket_2x22_P2.54mm_Vertical"
+SOCKET_2x22 = "papaya-pcb:ESP32S3_DevKit_2x1x22_split"  # custom: real board is two separate 1x22 rows, not one 2x22 block
 UBEC_CUSTOM = "papaya-pcb:UBEC_5V_3A_10x15mm"
 
 # id prefix -> footprint (used for the YAML patch)

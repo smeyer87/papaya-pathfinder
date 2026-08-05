@@ -1795,7 +1795,7 @@
 					)
 				)
 			)
-			(property "Footprint" "Connector_PinSocket_2.54mm:PinSocket_2x22_P2.54mm_Vertical"
+			(property "Footprint" "papaya-pcb:ESP32S3_DevKit_2x1x22_split"
 				(at 0 0 0)
 				(show_name no)
 				(do_not_autoplace no)
@@ -8672,7 +8672,7 @@
 				)
 			)
 		)
-		(property "Footprint" "Connector_PinSocket_2.54mm:PinSocket_2x22_P2.54mm_Vertical"
+		(property "Footprint" "papaya-pcb:ESP32S3_DevKit_2x1x22_split"
 			(at 284.48 304.8 0)
 			(hide yes)
 			(show_name no)
