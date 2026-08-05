@@ -23,24 +23,32 @@ YAML_PATH = REPO_ROOT / "papaya-wiring-layout.yaml"
 SCH_PATH = REPO_ROOT / "pathfinder" / "kicad" / "papaya-pcb" / "papaya-pcb.kicad_sch"
 
 TERM_2POS = "TerminalBlock:TerminalBlock_MaiXu_MX126-5.0-02P_1x02_P5.00mm"
-PINHDR = lambda n: f"Connector_PinHeader_2.54mm:PinHeader_1x{n:02d}_P2.54mm_Vertical"
 SOCKET_2x22 = "papaya-pcb:ESP32S3_DevKit_2x1x22_split"  # custom: real board is two separate 1x22 rows, not one 2x22 block
 UBEC_CUSTOM = "papaya-pcb:UBEC_5V_3A_10x15mm"
+# The three below are custom pad-renamed copies of standard parts -- the
+# standard library's default sequential pad numbering ("1".."6", etc.)
+# doesn't match our schematic's actual pin names (e.g. BTS driver pins
+# skip 5/6; ELRS/servo pins are named, not numbered). See
+# scripts/_gen_renamed_footprints.py for how these were derived.
+BTS_SIGNAL = "papaya-pcb:PinHeader_1x06_BTS_Signal"  # pads: 1,2,3,4,7,8
+ELRS_HDR = "papaya-pcb:PinHeader_1x04_ELRS"  # pads: VCC,GND,TX,RX
+UBEC6V_TERM = "papaya-pcb:TerminalBlock_2Pos_UBEC6V"  # pads: OUTP,OUTN
+SERVO_HDR = "papaya-pcb:PinHeader_1x03_Servo"  # pads: GND,PWR,SIG
 
 # id prefix -> footprint (used for the YAML patch)
 PREFIX_FOOTPRINT = {
     "J1": TERM_2POS,
     "J_ESP32": SOCKET_2x22,
     "J_UBEC5V": UBEC_CUSTOM,
-    "J_BTS1": PINHDR(6),
-    "J_BTS2": PINHDR(6),
-    "J_ELRS": PINHDR(4),
+    "J_BTS1": BTS_SIGNAL,
+    "J_BTS2": BTS_SIGNAL,
+    "J_ELRS": ELRS_HDR,
     "J_GND_MASTER": TERM_2POS,
-    "J_UBEC6V": TERM_2POS,
-    "J_S1": PINHDR(3),
-    "J_S2": PINHDR(3),
-    "J_S3": PINHDR(3),
-    "J_S4": PINHDR(3),
+    "J_UBEC6V": UBEC6V_TERM,
+    "J_S1": SERVO_HDR,
+    "J_S2": SERVO_HDR,
+    "J_S3": SERVO_HDR,
+    "J_S4": SERVO_HDR,
 }
 
 # ref designator (as assigned by generate_schematic.py, in first-appearance
@@ -49,15 +57,15 @@ REF_FOOTPRINT = {
     "J1": TERM_2POS,
     "J2": SOCKET_2x22,
     "J3": UBEC_CUSTOM,
-    "J4": PINHDR(6),
-    "J5": PINHDR(6),
-    "J6": PINHDR(4),
+    "J4": BTS_SIGNAL,
+    "J5": BTS_SIGNAL,
+    "J6": ELRS_HDR,
     "J7": TERM_2POS,
-    "J8": TERM_2POS,
-    "J9": PINHDR(3),
-    "J10": PINHDR(3),
-    "J11": PINHDR(3),
-    "J12": PINHDR(3),
+    "J8": UBEC6V_TERM,
+    "J9": SERVO_HDR,
+    "J10": SERVO_HDR,
+    "J11": SERVO_HDR,
+    "J12": SERVO_HDR,
 }
 
 TOP_COMPONENT_RE = re.compile(r"^  - id: (\S+)\s*$")
@@ -92,6 +100,10 @@ def patch_yaml(text: str) -> tuple[str, int]:
                 inner = inner.strip()
                 if inner.endswith(","):
                     inner = inner[:-1]
+                existing_fp = re.search(r',?\s*footprint: "[^"]*"', inner)
+                if existing_fp:
+                    inner = inner[: existing_fp.start()] + inner[existing_fp.end() :]
+                    inner = inner.rstrip().rstrip(",")
                 new_line = f'{indent}connector: {{{inner}, footprint: "{fp}" }}\n'
                 out.append(new_line)
                 count += 1
@@ -101,7 +113,7 @@ def patch_yaml(text: str) -> tuple[str, int]:
 
 
 REF_LINE_RE = re.compile(r'^\s*\(property "Reference" "([^"]+)"')
-FOOTPRINT_LINE_RE = re.compile(r'^(\s*)\(property "Footprint" ""')
+FOOTPRINT_LINE_RE = re.compile(r'^(\s*)\(property "Footprint" "[^"]*"')
 
 
 def patch_sch(text: str) -> tuple[str, int]:

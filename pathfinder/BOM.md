@@ -16,10 +16,12 @@ Note- these are the 'on board' components only.
   Amazon URL: https://www.amazon.com/dp/B0F5QCK6X5?ref=ppx_yo2ov_dt_b_fed_asin_title&th=1
   Amazon ASIN: B0F5QCK6X5
   Footprint: NOT a single 2x22 block -- two separate 1x22 P2.54mm header rows
-  (Espressif calls them J1/J3), measured row-to-row centerline spacing
-  25.5-26.0mm (used 25.75mm midpoint in the footprint -- verify against
-  physical hardware before fabrication). Pin 1 of both rows is at the same
-  end of the board. Custom footprint:
+  (Espressif calls them J1/J3). Measured row-to-row centerline spacing was
+  25.5-26.0mm; deliberately loosened to 25.40mm row spacing / 2.0mm pad /
+  1.1mm drill for assembly tolerance rather than targeting the raw
+  measurement exactly. Pin 1 of both rows is at the same end of the board;
+  row orientation corrected after an initial mirrored build (J1-origin pins
+  on the +Y row, J3-origin on -Y). Custom footprint:
   pathfinder/kicad/papaya-pcb/papaya-pcb.pretty/ESP32S3_DevKit_2x1x22_split.kicad_mod,
   pin assignment per Espressif's published ESP32-S3-DevKitC-1 J1/J3 tables.
 
