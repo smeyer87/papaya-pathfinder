@@ -44,7 +44,10 @@ designed via a YAML-first workflow rather than starting cold in KiCad:
   motors, servos, and the board's own connectors), not just the board.
   Real wire gauges, real terminal numbering, ground loop verified closed.
 - **[`pathfinder/kicad/papaya-pcb/`](pathfinder/kicad/papaya-pcb/)** — the
-  KiCad 10 project. The schematic is generated (see below), not hand-drawn.
+  KiCad 10 project. The schematic is generated (see below), not hand-drawn;
+  the layout, copper pours, routing, and 4 corner mounting holes were then
+  done by hand and verified with `kicad-cli` DRC (0 violations) and a full
+  net-by-net comparison against the YAML.
 - **[`pathfinder/kicad/scripts/generate_schematic.py`](pathfinder/kicad/scripts/generate_schematic.py)** —
   reads the wiring YAML and writes a fully-wired starter schematic (every
   component placed, every net labeled), validated against real KiCad 10 with
@@ -53,10 +56,14 @@ designed via a YAML-first workflow rather than starting cold in KiCad:
   pip install -r pathfinder/kicad/scripts/requirements.txt
   python pathfinder/kicad/scripts/generate_schematic.py
   ```
+- **[`pathfinder/kicad/papaya-pcb/gerbers/`](pathfinder/kicad/papaya-pcb/gerbers/)** —
+  fabrication output (Gerbers, Excellon drill file, drill map, job file, and
+  a zip of the set) for the board revision ordered from OSH Park.
 
 See **[`docs/development-log.md`](docs/development-log.md)** for the full
-write-up of how the wiring model and generator were built, what got
-corrected along the way, and what's left.
+write-up of how the wiring model, schematic generator, and PCB layout were
+built, what got corrected along the way, and what's left before first
+power-on.
 
 ## Documentation
 
