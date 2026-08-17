@@ -12,6 +12,11 @@ Note- these are the 'on board' components only.
   Amazon ASIN: B07PLSYX9G
   Footprint: rectangular with 4 pins at the corners, approx 10mm x 15mm.  Input and output pins are on the 'short' sides.
 
+  - UBEC 6V/8A: Tagged as 'U1'
+    Amazon URL: https://www.amazon.com/dp/B07DD9L6P6?ref=ppx_yo2ov_dt_b_fed_asin_title
+    Amazon ASIN: B07DD9L6P6
+    Footprint: Off board.  Connect output from U1 into screw terminals.
+
 - ESP32-S3 Development Board: used for ESP32 footprint.
   Amazon URL: https://www.amazon.com/dp/B0F5QCK6X5?ref=ppx_yo2ov_dt_b_fed_asin_title&th=1
   Amazon ASIN: B0F5QCK6X5

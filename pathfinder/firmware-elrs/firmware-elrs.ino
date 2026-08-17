@@ -30,9 +30,14 @@ static const int SERVO_MAX_DELTA = 35;
 static const int SERVO_HARDWARE_MIN = 5;
 static const int SERVO_HARDWARE_MAX = 175;
 
-int TRIM_LF = -10;
+// Trims temporarily zeroed for re-zeroing the new Miuzei DS3218 servo horns
+// against a clean, untrimmed center. Old values (-10/-5) were tuned for the
+// previous small servos and don't apply to the new hardware. Re-tune small
+// (a few degrees) offsets here once horns are mounted and on-vehicle
+// steering is verified straight.
+int TRIM_LF = 0;
 int TRIM_RF = 0;
-int TRIM_LB = -5;
+int TRIM_LB = 0;
 int TRIM_RB = 0;
 
 
