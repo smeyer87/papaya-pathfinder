@@ -67,38 +67,75 @@ Neither pin conflicts with the motor driver or servo pins already assigned.
 ## Binding the Transmitter and Receiver
 
 Both devices run ELRS 2.4 GHz V3 and are fully compatible. Two binding methods
-are available.
+are available. **Neither device has a screen** — the LiteRadio 2 SE is a
+gamepad-style transmitter (no OpenTX/EdgeTX menu system) and the RP3-V2 is a
+bare chip-scale receiver, so both binding methods below rely on physical
+buttons/power-cycling, not on-screen menus.
 
-### Method 1: Binding Phrase (Recommended)
+### Method 2: Traditional Button Bind (Recommended here)
 
-The modern ELRS approach — both devices share a passphrase and connect
-automatically on power-up, no button press required.
+Uses each device's factory-default identity (RP3-V2 ships with no binding
+phrase set — it binds via chip ID). **No PC software required at all**, which
+makes this the path to use if the BETAFPV Configurator or ExpressLRS
+Configurator is giving you trouble.
 
-1. Download and install **ExpressLRS Configurator**:
-   `https://github.com/ExpressLRS/ExpressLRS-Configurator/releases`
+> **Gotcha, confirmed on this build:** a receiver that has ever been flashed
+> with a binding phrase (Method 1) **will not enter manual bind mode at
+> all**, even though its LED may still change patterns in a way that looks
+> like it's searching. If Method 2 isn't working and the receiver was ever
+> given a custom phrase, go clear it first: reconnect to the receiver's WiFi
+> config page (or ExpressLRS Configurator) and **delete the binding phrase
+> field so it's genuinely blank**, then save/reflash, before retrying the
+> steps below. This was the actual root cause the first time through this
+> procedure on this build — the receiver had a phrase set but the
+> transmitter (see Method 1's compatibility note below) never got a
+> matching one, so nothing could ever pair no matter how the button-bind
+> timing was adjusted.
 
-2. Flash the **RP3-V2 receiver** via the Configurator:
-   - Target: `RadioMaster 2.4GHz RP3-V2`
-   - Set a binding phrase (e.g. `myrover2024`) — keep this private
-   - Flash via WiFi or UART passthrough
+1. Put the **RP3-V2 receiver** into bind mode: power it on, then rapidly
+   power-cycle it 3 times in quick succession (unplug/replug receiver power
+   three times, each off-period under ~2 seconds). Its LED should
+   double-blink quickly to confirm bind mode. (It has no physical bind
+   button — this power-cycle sequence is the substitute.)
+2. Put the **LiteRadio 2 SE transmitter** into bind mode: power it on, then
+   press the **Bind button** once — a small recessed button on the
+   transmitter body **to the left of its USB charging port**, distinct from
+   the 4 AUX toggle switches on the front. Its LED flashes red to confirm
+   bind mode.
+3. Within a few seconds the two should pair — the receiver's LED goes solid
+   to confirm binding is complete.
 
-3. Configure the **LiteRadio 2 SE transmitter**:
-   - Power on the transmitter
-   - Press `SYS` → scroll to `ExpressLRS` Lua script → open it
-   - Navigate to `Binding Phrase` and enter the same phrase
-   - Save and reboot
+### Method 1: Custom Binding Phrase (not usable on this build — reference only)
 
-4. Power both devices on — they connect automatically. No further binding needed.
+Lets you set a memorable private phrase instead of relying on the RP3-V2's
+factory chip ID — mainly useful if other ELRS gear might be nearby and you
+want to guarantee no cross-binding. More involved than it sounds: the
+LiteRadio 2 SE has no menu to type a phrase into directly, so **BETAFPV
+Configurator** is required to set it on the transmitter side, and the
+resulting UID bytes then have to be entered manually into the receiver via
+its CLI.
 
-### Method 2: Traditional Button Bind
+**Confirmed not usable on this build's transmitter unit**: this specific
+LiteRadio 2 SE is missing the sticker BETAFPV uses to mark units compatible
+with their Configurator software, and setting a phrase on the receiver only
+(with no way to match it on the transmitter) is what caused the extended
+bind failure documented in Method 2's callout above. Left here for
+reference in case a compatible transmitter is used in the future — use
+Method 2 for this build.
 
-Use this if you prefer not to reflash the receiver with a custom binding phrase.
-
-1. Power on the LiteRadio 2 SE transmitter
-2. Hold the **bind button on the RP3-V2** while plugging in receiver power
-   — the receiver LED flashes rapidly to indicate bind mode
-3. On the transmitter: `SYS → ExpressLRS Lua script → [BIND]`
-4. The receiver LED goes solid — binding is complete
+1. Download and install **BETAFPV Configurator**:
+   `https://github.com/BETAFPV/BETAFPV_Configurator/releases`
+2. In the Configurator, set a binding phrase for the LiteRadio 2 SE, save,
+   and reboot the transmitter. Note the UID bytes the Configurator
+   generates from your phrase.
+3. Flash the **RP3-V2 receiver** via **ExpressLRS Configurator**
+   (`https://github.com/ExpressLRS/ExpressLRS-Configurator/releases`,
+   a separate tool from BETAFPV Configurator) using its WiFi method — the
+   receiver hosts its own access point (`ExpressLRS RX`, password
+   `expresslrs`) after ~60 seconds unbound; connect to it and browse to
+   `http://10.0.0.1`. Enter the same binding phrase there, or if only UID
+   bytes are supported, enter those bytes via the receiver's Betaflight CLI.
+4. Power both devices on — they connect automatically.
 
 ---
 

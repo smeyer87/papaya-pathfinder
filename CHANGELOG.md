@@ -11,6 +11,29 @@ All notable changes to this project are documented here. Versioning follows
 - **PATCH** — fixes, tuning, and small additions (e.g. trim values, BOM
   entries, doc updates).
 
+## [1.0.1] - 2026-09-09
+
+### Added
+- `docs/adr/0001-esp32-header-pin-trimming.md` — architecture decision
+  record for trimming the ESP32 module's GPIO15/GPIO40 header pins (a pour
+  boundary passes close enough between those two positions to risk an
+  accidental short) instead of a full board respin or stripping every
+  unused pin, and why the more aggressive option was rejected (mechanical
+  retention risk on a full-size, vibration-exposed rover).
+- `docs/servo-zeroing.md` — step-by-step procedure for flashing firmware
+  and validating steering servo centering before horns are coupled to the
+  steering linkage.
+
+### Changed
+- `docs/elrs-wiring.md` — reworked the ELRS binding instructions: the
+  previously-documented "Method 1" binding-phrase flow doesn't work on
+  this build's LiteRadio 2 SE (missing the BETAFPV Configurator
+  compatibility sticker), so button-bind (chip-ID based) is now documented
+  as the recommended method, with the binding-phrase flow kept only as
+  reference and a callout on the root-cause gotcha (a receiver ever
+  flashed with a binding phrase won't re-enter manual bind mode until that
+  phrase is explicitly cleared).
+
 ## [1.0.0] - 2026-08-16
 
 Baseline checkpoint. Version tracking starts here — prior work (wiring
