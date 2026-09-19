@@ -270,8 +270,101 @@ Final state before the order was placed: 0 DRC violations, full net-by-net
 parity against the YAML across every net, mounting holes clear of all
 components and copper pours.
 
+## Phase 1 bring-up (2026-08-20 – 2026-09-19)
+
+Boards arrived from OSH Park and assembly/bring-up began. This section
+covers the path from first power-on to a fully working drivetrain —
+including two real hardware defects found along the way, since both are
+now permanent lessons for this board design.
+
+### First power-on and an ESP32 hardware fault
+
+First power-on (2026-08-20) was successful: firmware flashed, both UBECs
+(`U1` 6V, `U2` 5V) measured clean, no smoke/damage. Servo motion wasn't
+directly observable that session (servos mounted inside a housing).
+
+During later ELRS bring-up (2026-09-01), a COM port dropout during a
+reflash corrupted the ESP32's app partition. Recovery attempts (reflash,
+slower upload speed, corrected flash size — the module is actually a
+`ESP32-S3-WROOM-1-N16R8`, 16MB flash / 8MB octal PSRAM, not the 4MB the
+Tools menu was set to — full chip erase, DIO vs QIO flash mode) all
+failed identically, including with the stock unmodified `Blink` example,
+which ruled out project firmware entirely. Swapping in a spare board from
+the same 3-pack confirmed a genuine hardware fault (likely the flash chip)
+on the original unit — `Blink` booted clean on the spare immediately. The
+module is socketed via Dupont headers rather than soldered direct, which
+made the swap trivial. **Lesson:** when a stock example sketch fails
+identically to project firmware after eliminating every software variable,
+suspect the silicon, not the code.
+
+### GPIO15/GPIO40 pour proximity (ADR 0001)
+
+Re-inspecting the received PCB found a copper pour boundary passing close
+enough between the GPIO15 and GPIO40 header pin positions to risk an
+accidental bridge (solder wicking, pin misalignment, debris). Neither pin
+is used by the firmware, so the fix was to trim just those two header pins
+(module side and matching board socket pins) rather than a full respin —
+see [`docs/adr/0001-esp32-header-pin-trimming.md`](adr/0001-esp32-header-pin-trimming.md).
+A second physical board was assembled with those two pins excluded.
+
+### Full-system retest surfaces two real, unrelated defects
+
+With the GPIO15/40-trimmed board built, motors newly wired in, and a
+fresh ESP32 installed, a full retest (2026-09-18/19) initially showed
+**zero response from every servo and every motor**, despite the ELRS link
+coming up clean and the 6V/5V rails both measuring correct at their UBEC
+outputs. Working through this methodically (see the session transcript for
+the full diagnostic trail) turned up two independent problems hiding
+behind each other:
+
+1. **Motor power distribution terminal block was miswired**, effectively
+   shorting the motor supply. Corrected by rewiring the terminal block
+   per the intended polarity/positions; motors then responded 100% to
+   controller input on the first retest. This was a wiring mistake, not a
+   board or firmware defect.
+2. **All four servo header GND pads (`J9`–`J12`) were physically isolated
+   from the ground pour** — a real PCB layout defect, confirmed by a
+   0Ω/∞Ω resistance test and then traced to its root cause in the KiCad
+   file itself. Full writeup, including the exact copper geometry and a
+   recommended permanent fix, is in
+   [`docs/adr/0002-servo-header-ground-isolation.md`](adr/0002-servo-header-ground-isolation.md).
+   Short-term fix: hand-soldered ground jumper wires from `J8`'s ground
+   terminal to each servo `GND` pin, bypassing the pour. Verified working
+   — all four servos now respond correctly to both boot-time centering and
+   live transmitter input.
+
+**Lessons carried forward from this session:**
+
+- A clean DRC run and a correctly-set zone-connection override are **not**
+  proof that a tight-clearance pad is actually reached by poured copper —
+  DRC's unconnected-item check verifies net assignment, not physical
+  continuity of the pour body. The only way this was actually caught was
+  probing outward from the pad in software and independently with a real
+  ohmmeter on the physical board. See ADR 0002 for the full technique.
+- When several actuators fail identically (all 4 servos, both motors),
+  suspect a shared cause (power/ground) before suspecting N independent
+  signal-wiring failures — but verify power *at the actual load
+  connector*, not just at the UBEC's own output terminal. Rail voltage
+  measured clean at the source can still fail to reach the actual load if
+  something's broken downstream.
+- Probing tightly-pitched headers (2.54mm servo connectors) with bare
+  pointed multimeter probes carries real short risk — one such short
+  destroyed a board mid-session. Prefer soldered or clipped test leads
+  over hand-held point probes on tight headers.
+- Substitution testing with a single known-good component (one spare
+  servo, tried in all four positions) cleanly ruled out "bad batch of new
+  servos" as a hypothesis in one cheap step, before any deeper board-level
+  investigation was warranted.
+
 ## Next steps
 
-- Design phase is complete; the board has been ordered from OSH Park.
-- Once boards arrive: assemble, bring up the ESP32 firmware, and verify
-  against the wiring YAML pin-by-pin before first power-on.
+- Phase 1 build is complete: full drivetrain (4 servos + 2 motor
+  channels) confirmed responding correctly to ELRS transmitter input.
+  Wheels being attached next; steering trims still need on-vehicle
+  fine-tuning once wheels are on.
+- Before any board reorder: apply the permanent ground-trace fix in
+  [ADR 0002](adr/0002-servo-header-ground-isolation.md) to the `.kicad_pcb`
+  file and re-verify — do not resubmit the existing Gerbers as-is.
+- Phase 2 (LIDAR/autonomy) not yet scoped — see
+  `docs/superpowers/specs/2026-08-16-phase1-current-state.md` and use
+  `superpowers:brainstorming` when it kicks off.

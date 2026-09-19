@@ -11,6 +11,38 @@ All notable changes to this project are documented here. Versioning follows
 - **PATCH** — fixes, tuning, and small additions (e.g. trim values, BOM
   entries, doc updates).
 
+## [1.1.0] - 2026-09-19
+
+Phase 1 complete: the rover drives under full ELRS control (steering,
+throttle, spin-in-place all confirmed). Two real hardware defects were
+found and fixed during final bring-up — full narrative in
+[`docs/development-log.md`](docs/development-log.md#phase-1-bring-up-2026-08-20--2026-09-19).
+
+### Added
+- `docs/adr/0002-servo-header-ground-isolation.md` — architecture decision
+  record for a PCB layout defect where all four servo header GND pads were
+  physically isolated from the ground pour (boxed in by the 6V pour's
+  territory), found via resistance testing and confirmed against the
+  KiCad file itself. Documents the short-term hand-wired jumper fix in
+  place now and the permanent routed-trace fix needed before any board
+  reorder.
+- `docs/build-guide.md` — start-from-scratch build guide covering BOM
+  purchase through fabrication, assembly, firmware flashing, and bring-up
+  testing, written to route around every pitfall hit during this build.
+
+### Fixed
+- Motor power distribution terminal block was wired incorrectly, shorting
+  the motor supply; both motor channels now respond correctly to
+  controller input.
+- Servo header ground isolation (see ADR 0002 above) — hand-wired ground
+  jumpers from `J8`'s ground terminal to each servo `GND` pin restore the
+  connection the pour was supposed to provide.
+
+### Changed
+- `docs/superpowers/specs/2026-08-16-phase1-current-state.md` — all Phase 1
+  exit criteria checked off except on-vehicle servo trim tuning (pending
+  wheel attachment).
+
 ## [1.0.1] - 2026-09-09
 
 ### Added

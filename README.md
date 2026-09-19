@@ -24,7 +24,7 @@ R/C transmitter/receiver instead.
 - **Motor Drivers:** 2× BTS7960/IBT_2
 - **Motors:** 6× GA25 DC gear motors (3 per side, ganged — one PWM signal
   per side drives all 3 motors on that side simultaneously)
-- **Steering:** 4× MS24 servos (front and rear axles only)
+- **Steering:** 4× Miuzei DS3218 servos (front and rear axles only)
 - **Power:** LiPo 3S
 - **Voltage Regulation:** UBEC 5V/3A (logic) + UBEC 6V/8A (servos)
 
@@ -62,17 +62,31 @@ designed via a YAML-first workflow rather than starting cold in KiCad:
 
 See **[`docs/development-log.md`](docs/development-log.md)** for the full
 write-up of how the wiring model, schematic generator, and PCB layout were
-built, what got corrected along the way, and what's left before first
-power-on.
+built, and the Phase 1 bring-up narrative (including two real hardware
+defects found and fixed — see the ADRs below).
+
+**Status: Phase 1 complete** (2026-09-19) — the rover drives under full
+ELRS control. See
+[`docs/superpowers/specs/2026-08-16-phase1-current-state.md`](docs/superpowers/specs/2026-08-16-phase1-current-state.md)
+for the exit-criteria checklist.
 
 ## Documentation
 
+- **[`docs/build-guide.md`](docs/build-guide.md) — start here if you're
+  building one of these from scratch**: full parts list through
+  fabrication, assembly, firmware flashing, and bring-up testing, written
+  to route around every mistake made during this build.
 - [`docs/build-notes.md`](docs/build-notes.md) — build journal, gap
   analysis vs. the upstream docs, project goals for this fork
 - [`docs/elrs-wiring.md`](docs/elrs-wiring.md) — ELRS receiver wiring,
   binding, and RC channel mapping
-- [`docs/development-log.md`](docs/development-log.md) — wiring model and
-  KiCad generator development summary
+- [`docs/servo-zeroing.md`](docs/servo-zeroing.md) — flashing firmware and
+  validating steering servo centering
+- [`docs/development-log.md`](docs/development-log.md) — wiring model,
+  KiCad generator, PCB layout, and Phase 1 bring-up narrative
+- [`docs/adr/`](docs/adr/) — architecture decision records for two hardware
+  defects found post-fabrication (ESP32 header pin trimming; servo header
+  ground isolation) and how they were resolved
 - [`docs/UPSTREAM_README.md`](docs/UPSTREAM_README.md) — archived original
   project README (both rover variants, full parts tables, controllers)
 
