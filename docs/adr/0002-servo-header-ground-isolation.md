@@ -88,7 +88,34 @@ guess blindly for a file headed to fab. This is exactly the kind of
 task suited to interactive routing in the KiCad GUI, with real-time DRC
 feedback, rather than scripted coordinates trusted without a visual pass.
 
-### Candidate routing data (for whoever does the actual routing)
+### Addendum (2026-09-19): a simpler fix than originally proposed
+
+Closer measurement (stepping outward from each pad in 0.2mm increments,
+not just testing a single offset point) shows the obstruction between each
+pad and real ground is a **thin, contiguous strip of `6V_POUR` copper**,
+not a sprawling claim on the whole surrounding area — the original
+straight-line approach was fine; it just needed the exact strip removed.
+
+| Connector | Direction | `6V_POUR` strip to notch out | Real ground begins |
+|---|---|---|---|
+| `J9` | up (−Y) | y ≈ 63.9 → 65.9 (~2.0mm) | y ≈ 63.7 |
+| `J10` | down (+Y) | y ≈ 76.1 → 78.7 (~2.6mm) | y ≈ 78.9 |
+| `J11` | down (+Y) | y ≈ 76.1 → 78.7 (~2.6mm) | y ≈ 78.9 |
+| `J12` | up (−Y) | y ≈ 64.0 → 68.4 (~4.4mm) | y ≈ 63.6 |
+
+(all at each pad's own X — 131.5 for `J9`/`J10`, 146.5/146.46 for
+`J11`/`J12`.) **Preferred fix:** trim the `6V_POUR` zone's outline to
+exclude a notch spanning that Y-range at each pad's X (~0.3mm margin on
+each end, ~2mm wide in X — clear of the `PWR` pad 2.54mm over), then
+refill zones. `MASTER_GND`'s lower fill priority should then claim the
+opened strip and connect straight through, all on `B.Cu` — no layer jump
+or routing around the `SIG` traces needed. This is simpler than the F.Cu
+jumper-trace approach below and is now the recommended fix; the F.Cu
+approach is kept as a fallback. Don't cut the notch razor-thin — size it
+generously (as above) given this whole defect started from an
+insufficiently-margined connection.
+
+### Candidate routing data (fallback approach, F.Cu jumper traces)
 
 All coordinates in mm, board origin as used by the existing `.kicad_pcb`.
 
