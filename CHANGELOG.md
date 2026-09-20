@@ -11,6 +11,25 @@ All notable changes to this project are documented here. Versioning follows
 - **PATCH** — fixes, tuning, and small additions (e.g. trim values, BOM
   entries, doc updates).
 
+## [2.0.0] - 2026-09-19
+
+Phase 1 baseline, pinned. Rover drives correctly end-to-end and this marks
+the closing point of Phase 1 before Phase 2 (LIDAR/autonomy) design work
+begins.
+
+### Fixed
+- Steering direction was reversed from stick input — this build's servo
+  horns are mounted opposite the orientation the original channel-mapping
+  math assumed. Fixed by inverting the steering channel reading in
+  `firmware-elrs.ino`.
+
+### Changed
+- Throttle response: stick input is now squared (sign preserved) before
+  driving the motors, giving finer control at low throttle instead of a
+  1:1 linear mapping, plus an overall `THROTTLE_MAX` cap (0.6) as a
+  top-speed limiter. Added after full-throttle testing was too aggressive
+  off the line for indoor driving.
+
 ## [1.1.0] - 2026-09-19
 
 Phase 1 complete: the rover drives under full ELRS control (steering,

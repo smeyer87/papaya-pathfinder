@@ -40,6 +40,15 @@ int TRIM_RF = 0;
 int TRIM_LB = 0;
 int TRIM_RB = 0;
 
+// Throttle shaping: stick input is squared (sign preserved) before driving
+// the motors, so small deflections near center produce proportionally less
+// output than a 1:1 linear mapping -- finer control right off the line,
+// full output still reachable at full stick. THROTTLE_MAX then scales the
+// squared result as an overall top-speed cap, independent of the curve.
+// Tune both down further (e.g. THROTTLE_MAX 0.4-0.5) if it's still too
+// quick off the line.
+const float THROTTLE_MAX = 0.6f;
+
 
 bool connectToWiFi(const char* ssid, const char* pass, uint32_t timeoutMs);
 void handlePostData();
@@ -94,7 +103,10 @@ void loop() {
     int rawThrottle = crsf.getChannel(3);
     int rawSpin = crsf.getChannel(4);
 
-    float steeringVal = (rawSteering - 1500) / 500.0;
+    // Inverted vs. a naive channel reading -- this build's servo horns are
+    // mounted opposite the orientation the steering math assumes, so
+    // left/right stick was driving the wheels the wrong way.
+    float steeringVal = (1500 - rawSteering) / 500.0;
     float throttleVal = (rawThrottle - 1500) / 500.0;
     float spinVal = (rawSpin - 1500) / 500.0;
 
@@ -105,6 +117,10 @@ void loop() {
     } else {
       if (abs(steeringVal) < deadzone) steeringVal = 0;
       if (abs(throttleVal) < deadzone) throttleVal = 0;
+
+      float throttleSign = (throttleVal < 0) ? -1.0f : 1.0f;
+      throttleVal = throttleSign * throttleVal * throttleVal * THROTTLE_MAX;
+
       setSteering(steeringVal);
       setMotor(throttleVal);
     }
