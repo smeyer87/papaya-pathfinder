@@ -5,7 +5,7 @@
       "Application": "Pcbnew",
       "Version": "10.0.4"
     },
-    "CreationDate": "2026-09-20T20:15:49-05:00"
+    "CreationDate": "2026-09-20T20:20:18-05:00"
   },
   "GeneralSpecs": {
     "ProjectId": {
@@ -34,37 +34,47 @@
   ],
   "FilesAttributes": [
     {
-      "Path": "papaya-pcb-F_Cu.gtl",
+      "Path": "papaya-pcb-F_Cu.gbr",
       "FileFunction": "Copper,L1,Top",
       "FilePolarity": "Positive"
     },
     {
-      "Path": "papaya-pcb-B_Cu.gbl",
+      "Path": "papaya-pcb-B_Cu.gbr",
       "FileFunction": "Copper,L2,Bot",
       "FilePolarity": "Positive"
     },
     {
-      "Path": "papaya-pcb-F_Silkscreen.gto",
+      "Path": "papaya-pcb-F_Paste.gbr",
+      "FileFunction": "SolderPaste,Top",
+      "FilePolarity": "Positive"
+    },
+    {
+      "Path": "papaya-pcb-B_Paste.gbr",
+      "FileFunction": "SolderPaste,Bot",
+      "FilePolarity": "Positive"
+    },
+    {
+      "Path": "papaya-pcb-F_Silkscreen.gbr",
       "FileFunction": "Legend,Top",
       "FilePolarity": "Positive"
     },
     {
-      "Path": "papaya-pcb-B_Silkscreen.gbo",
+      "Path": "papaya-pcb-B_Silkscreen.gbr",
       "FileFunction": "Legend,Bot",
       "FilePolarity": "Positive"
     },
     {
-      "Path": "papaya-pcb-F_Mask.gts",
+      "Path": "papaya-pcb-F_Mask.gbr",
       "FileFunction": "SolderMask,Top",
       "FilePolarity": "Negative"
     },
     {
-      "Path": "papaya-pcb-B_Mask.gbs",
+      "Path": "papaya-pcb-B_Mask.gbr",
       "FileFunction": "SolderMask,Bot",
       "FilePolarity": "Negative"
     },
     {
-      "Path": "papaya-pcb-Edge_Cuts.gm1",
+      "Path": "papaya-pcb-Edge_Cuts.gbr",
       "FileFunction": "Profile",
       "FilePolarity": "Positive"
     }
