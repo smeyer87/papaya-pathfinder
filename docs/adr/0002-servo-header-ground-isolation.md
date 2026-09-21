@@ -2,9 +2,13 @@
 
 ## Status
 
-Accepted — 2026-09-19. Short-term fix (bodge wires) in place and verified
-working. Permanent PCB fix (routed traces) not yet applied to the design
-file — see Consequences.
+Accepted and resolved — 2026-09-20. Short-term fix (bodge wires) was in
+place and verified working on the physical boards. The permanent fix
+(zone cutouts, see Addendum below) is now applied to
+`pathfinder/kicad/papaya-pcb/papaya-pcb.kicad_pcb` and re-verified via DRC
+and the point-probe technique that originally found this defect — ready
+for fabrication. See Consequences for what still needs doing on any
+already-fabricated board.
 
 ## Context
 
@@ -104,16 +108,22 @@ straight-line approach was fine; it just needed the exact strip removed.
 | `J12` | up (−Y) | y ≈ 64.0 → 68.4 (~4.4mm) | y ≈ 63.6 |
 
 (all at each pad's own X — 131.5 for `J9`/`J10`, 146.5/146.46 for
-`J11`/`J12`.) **Preferred fix:** trim the `6V_POUR` zone's outline to
-exclude a notch spanning that Y-range at each pad's X (~0.3mm margin on
-each end, ~2mm wide in X — clear of the `PWR` pad 2.54mm over), then
-refill zones. `MASTER_GND`'s lower fill priority should then claim the
-opened strip and connect straight through, all on `B.Cu` — no layer jump
-or routing around the `SIG` traces needed. This is simpler than the F.Cu
-jumper-trace approach below and is now the recommended fix; the F.Cu
-approach is kept as a fallback. Don't cut the notch razor-thin — size it
-generously (as above) given this whole defect started from an
-insufficiently-margined connection.
+`J11`/`J12`.) **Applied 2026-09-20:** a zone cutout was added to the
+`6V_POUR` zone's outline on `B.Cu` at each of these four locations (using
+KiCad's "Add a Zone Cutout" tool on the existing zone, not a new
+independent zone), then zones were refilled. `MASTER_GND`'s lower fill
+priority claims the opened strip and connects straight through, all on
+`B.Cu` — no layer jump or routing around the `SIG` traces needed.
+
+Re-verified after the fix: `kicad-cli pcb drc --severity-all
+--schematic-parity` — 0 violations, unconnected items down from 5 to 1
+(the remaining one is the pre-existing, unrelated island near mounting
+hole `H1`). Point-probe re-check (the same technique that originally
+found this defect) — real `MASTER_GND` copper now reaches within 0.9mm of
+all four pads (was: nothing within 3–4mm). `6V_POUR`'s connection to each
+header's `PWR` pad was separately confirmed undisturbed. This was simpler
+than the F.Cu jumper-trace approach below, which is kept only as a
+fallback/reference and was not needed.
 
 ### Candidate routing data (fallback approach, F.Cu jumper traces)
 
@@ -138,11 +148,11 @@ a clean DRC alone already proved insufficient once.
 
 - The two currently-fabricated boards (both from the original OSH Park
   order) carry this defect and need the hand-wired ground jumpers to
-  function. Any other unpopulated board from that same order will have the
-  same defect.
-- A future reorder should not simply resubmit the existing Gerbers — the
-  permanent fix above needs to be routed and DRC-reverified first, or the
-  new boards will need the same bodge wires.
+  keep functioning. Any other unpopulated board from that same order will
+  have the same defect and needs the same jumpers until replaced.
+- Boards fabricated from the `.kicad_pcb` file as of 2026-09-20 onward
+  include the permanent fix (v2.0.1) — no jumpers needed on new boards
+  built from this revision or later.
 - This is now a documented, general lesson for this board's layout style
   (heavy reliance on zone-fill-to-pad connections at tight clearances):
   DRC's unconnected-item check is not sufficient proof of a real physical

@@ -50,16 +50,15 @@ generated/laid out from it. See
 [`docs/development-log.md`](development-log.md) for the full design
 narrative if you're starting a layout from scratch.
 
-If you're fabricating from the **existing** `.kicad_pcb` file as-is:
-before submitting it, apply the permanent fix in
-[ADR 0002](adr/0002-servo-header-ground-isolation.md) — all four servo
-header ground pads are currently isolated from the ground pour in the
-committed design file, and boards fabricated from it as-is will need the
-hand-wired jumper workaround described in step 4 below. Re-run
-`kicad-cli pcb drc --severity-all --schematic-parity` after any fix
-(expect 0 violations) **and** do a visual copper-fill review in the KiCad
-GUI — a clean DRC run alone was not sufficient to catch this defect the
-first time.
+As of v2.0.1, the committed `.kicad_pcb` file already includes the
+permanent servo-ground fix from [ADR 0002](adr/0002-servo-header-ground-isolation.md)
+— boards fabricated from the current file don't need the hand-wired
+jumper workaround in step 4 below. If you're working from an older copy
+of the file (pre-2026-09-20), apply that fix first and re-verify with
+`kicad-cli pcb drc --severity-all --schematic-parity` (expect 0
+violations) **and** a visual copper-fill review in the KiCad GUI — a
+clean DRC run alone was not sufficient to catch this defect the first
+time.
 
 OSH Park (or an equivalent fab) accepts the `.kicad_pcb` file directly, or
 use the Gerbers already exported to

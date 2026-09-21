@@ -11,6 +11,28 @@ All notable changes to this project are documented here. Versioning follows
 - **PATCH** — fixes, tuning, and small additions (e.g. trim values, BOM
   entries, doc updates).
 
+## [2.0.1] - 2026-09-20
+
+### Fixed
+- Permanent fix for the servo header ground isolation defect (ADR 0002)
+  applied to `pathfinder/kicad/papaya-pcb/papaya-pcb.kicad_pcb`: cut four
+  zone cutouts into the `6V_POUR` zone on `B.Cu`, one behind each servo
+  header GND pad, so the lower-priority `MASTER_GND` zone fills through
+  to them on refill. Re-verified with `kicad-cli` DRC (0 violations,
+  unconnected items down from 5 to 1 — the one remaining is the
+  pre-existing, unrelated island near mounting hole `H1`) and with the
+  same point-probe technique used to originally find the defect: real
+  ground copper now reaches within 0.9mm of all four pads (previously
+  nothing within 3–4mm), and the `6V_POUR` connection to each header's
+  `PWR` pin was confirmed undisturbed.
+- Gerbers and drill files in
+  `pathfinder/kicad/papaya-pcb/gerbers/` regenerated to match. Board is
+  ready to send to fab with this fix included — no more hand-wired ground
+  jumpers needed on boards built from this revision.
+
+### Added
+- Minor `F.Silkscreen` identification text for a couple of components.
+
 ## [2.0.0] - 2026-09-19
 
 Phase 1 baseline, pinned. Rover drives correctly end-to-end and this marks

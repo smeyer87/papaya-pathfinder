@@ -3,3 +3,4 @@ wifi_config.h
 .DS_STORE
 .idea
 .history
+*.lck
