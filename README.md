@@ -87,6 +87,9 @@ for the exit-criteria checklist.
 - [`docs/adr/`](docs/adr/) — architecture decision records for two hardware
   defects found post-fabrication (ESP32 header pin trimming; servo header
   ground isolation) and how they were resolved
+- [`docs/phase2/inputs/`](docs/phase2/inputs/) — Phase 2 planning input
+  templates (missions, capabilities, sensors/compute, platform,
+  assumptions/decisions) feeding the Phase 2 design session
 - [`docs/UPSTREAM_README.md`](docs/UPSTREAM_README.md) — archived original
   project README (both rover variants, full parts tables, controllers)
 

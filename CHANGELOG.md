@@ -11,6 +11,19 @@ All notable changes to this project are documented here. Versioning follows
 - **PATCH** — fixes, tuning, and small additions (e.g. trim values, BOM
   entries, doc updates).
 
+## [2.0.2] - 2026-09-23
+
+### Added
+- `docs/phase2/inputs/` — structured templates for collecting Phase 2
+  planning notes ahead of the design session: an inbox for unsorted
+  notes, plus one file each for mission packages, capabilities,
+  sensors/compute/electronics, physical platform updates, and
+  constraints/assumptions/decisions/open questions. Items carry
+  traceability IDs (`MP-`, `CAP-`, `SEN-`, `PLT-`, `Q-`, …) so each
+  downstream item links back to the mission it supports. Phase 1
+  baseline hardware constraints (GPIO usage, trimmed pins, power rails,
+  open-loop drive) pre-filled from the repo.
+
 ## [2.0.1] - 2026-09-20
 
 ### Fixed
