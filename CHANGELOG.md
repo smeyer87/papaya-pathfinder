@@ -11,6 +11,14 @@ All notable changes to this project are documented here. Versioning follows
 - **PATCH** — fixes, tuning, and small additions (e.g. trim values, BOM
   entries, doc updates).
 
+## [2.0.3] - 2026-09-23
+
+### Added
+- `docs/phase2/inputs/00-inbox.md` — first draft of offline Phase 2
+  planning notes (mission packages, capability list, and related raw
+  notes), captured unsorted. Triage into the numbered input files is
+  deferred to the Phase 2 planning session.
+
 ## [2.0.2] - 2026-09-23
 
 ### Added
