@@ -24,6 +24,8 @@ rather than re-litigate:
 - Local, container-hosted Management UI reading from MongoDB
 - Command delivery via a polled queue, live whenever WiFi is present
 - Operator-triggered, idle-only software/firmware updates over WiFi
+- Rover identity as a first-class registry entry, one active rover at a
+  time (multi-rover concurrency is a roadmap item, not v1)
 
 This spec supersedes the corresponding `TBD`/open items in
 `docs/phase2/inputs/02-05` for MP-1's scope. Those input files should be
@@ -101,6 +103,38 @@ respin already flagged in [CON-B4](../../phase2/inputs/05-assumptions-decisions.
 plus the larger payload bay ([PLT-5](../../phase2/inputs/04-physical-platform.md))
 needed to physically fit the Pi.
 
+## Rover Identity & Fleet
+
+MP-1 is being built against a single physical rover, but the platform
+is expected to support multiple physical prototypes as Phase 2
+progresses — e.g. an MP-1-only sensor build now, followed by a separate
+MP-1+MP-2 build later, rather than always evolving one physical unit.
+
+**Rover record.** Each physical rover is a document keyed by a Mongo
+ObjectId, with a separately editable human-friendly `name` (e.g.
+"George", "Rover1") — the ObjectId is the stable internal reference
+(telemetry, sweep sessions, commands); the name is what operators see
+and pick in the UI. Each record also carries the sensor manifest and a
+supported-mission-package list (see Data Model below) — "which sensors
+does this build have" and "which missions can it run" are properties of
+the rover, not guessed per session.
+
+**One active rover at a time (v1 assumption).** Multiple rover records
+can exist in the registry simultaneously (different prototypes at
+different build stages), but only one may have an active mission
+running at any moment. Starting a mission on a rover while another
+already has one active is rejected — an operator picks which rover
+they're operating before issuing mission commands. The command queue
+and telemetry are scoped per `rover_id` accordingly.
+
+**Roadmap (out of scope for v1).** Multiple rovers operating
+concurrently — implying each rover shares basic position/status with
+the others for conflict avoidance, and lifting the one-active
+constraint — is a real future direction, not a hypothetical. Flagging
+it here so the `rover_id` scoping above doesn't need to be redesigned
+later; the concurrent-operation logic itself is its own spec when that
+need actually arrives.
+
 ## Command Channel
 
 The Architecture section above covers rover → Mongo data flow; this
@@ -111,9 +145,10 @@ mid-mission interrupts (a gap in the original pass).
 local backend. The rover polls that queue frequently (on the order of
 seconds) whenever WiFi is connected — command payloads are tiny, so
 this doesn't conflict with the battery-conservation reasoning behind
-checkpoint-only telemetry/obstacle sync. A command issued while the
-rover is briefly unreachable simply waits in the queue until the next
-successful poll, rather than being lost.
+checkpoint-only telemetry/obstacle sync. Each command targets a
+specific `rover_id`, and a rover polls only its own queue. A command
+issued while the rover is briefly unreachable simply waits in the queue
+until the next successful poll, rather than being lost.
 
 **Command set for MP-1.** Start sweep, pause sweep, resume sweep, stop/
 abort sweep, abort-and-return-home, update geofence (applied to the
@@ -197,6 +232,12 @@ already in MongoDB.
 
 ## Data Model
 
+**Rover.** `id` (Mongo ObjectId), `name` (human-editable display name),
+`sensor_manifest` (installed hardware — feeds the telemetry
+missing-vs-not-applicable logic below), `supported_mission_packages`
+(list of MP IDs this build can run), `status` (active / inactive, per
+the one-active-rover rule above), `created_at`/`updated_at`, `notes`.
+
 **Geofence.** `id`, `type` (inclusive/exclusive), `vertices` (ordered
 lat/long list), `name`, `created_at`/`updated_at`. One inclusive fence
 plus zero or more exclusive fences define MP-1's operating area. Source
@@ -204,7 +245,7 @@ of truth is MongoDB; the rover keeps a local cached copy for offline
 operation. Sector segmentation ([CAP-3](../../phase2/inputs/02-capabilities.md))
 is deferred — v1 treats the whole geofenced area as a single unit.
 
-**Sweep session** (enables resume). `id`, `geofence_id`, `status`
+**Sweep session** (enables resume). `id`, `rover_id`, `geofence_id`, `status`
 (in_progress / interrupted / completed), `pattern` (the generated
 waypoint list), `last_completed_waypoint_index`, `started_at`,
 `interrupted_at`, `completed_at`. Interruption persists this record
@@ -264,15 +305,15 @@ nothing is written for metrics outside the current sensor
 configuration. This only works if the Pi knows what to expect for the
 current run, which is what the sensor manifest below provides.
 
-**Sensor manifest.** The UI maintains two things that combine into
-"expected metrics for this run": a per-rover sensor manifest (what
-hardware is actually installed — useful once builds vary, or a sensor
-is temporarily removed for maintenance) and a per-mission-package
-expected-metrics list (MP-1 expects GPS, pack-level battery, motor/
-servo status, WiFi signal, nav status, mission status, error/event log).
-An operator can confirm or edit the manifest through the UI. Both the
-Pi (for missing-value tagging) and the backend (for review/alerting on
-gaps) use the same combined expectation.
+**Sensor manifest.** "Expected metrics for this run" combines two
+things: the sensor manifest stored on the active rover's record (see
+Rover Identity & Fleet above — what hardware that specific physical
+build actually has) and a per-mission-package expected-metrics list
+(MP-1 expects GPS, pack-level battery, motor/servo status, WiFi signal,
+nav status, mission status, error/event log). An operator can confirm
+or edit a rover's manifest through the UI. Both the Pi (for
+missing-value tagging) and the backend (for review/alerting on gaps)
+use the same combined expectation.
 
 **Two tiers.**
 - **Live summary** — low-rate (position, battery, nav mode,
@@ -391,6 +432,10 @@ the planning/implementation phase:
   deploy
 - Exact "missing" sentinel convention, applied consistently across all
   metrics
+- UI rover-selector/activation flow: exact interaction for choosing and
+  locking in the active rover before issuing commands
+- Whether `supported_mission_packages` on a Rover record is manually
+  curated or inferred from its sensor manifest
 
 ## Not in scope for MP-1
 
@@ -400,3 +445,5 @@ the planning/implementation phase:
 - Cloud-hosted UI — local container hosting only
 - RTK GPS — standard module only, revisit if accuracy proves insufficient
 - Pi AI HAT / NVMe HAT — no need identified for MP-1's workload
+- Concurrent multi-rover operation and inter-rover position sharing for
+  conflict avoidance — roadmap item, see Rover Identity & Fleet
