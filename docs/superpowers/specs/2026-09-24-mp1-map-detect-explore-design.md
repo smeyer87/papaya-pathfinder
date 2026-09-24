@@ -22,6 +22,8 @@ rather than re-litigate:
 - Store-and-forward data sync, checkpointed on every Home return
 - Two-tier telemetry (live summary + bulk detailed log)
 - Local, container-hosted Management UI reading from MongoDB
+- Command delivery via a polled queue, live whenever WiFi is present
+- Operator-triggered, idle-only software/firmware updates over WiFi
 
 This spec supersedes the corresponding `TBD`/open items in
 `docs/phase2/inputs/02-05` for MP-1's scope. Those input files should be
@@ -49,14 +51,29 @@ Pi and ESP32 communicate over a local link (UART or USB — exact choice
 is an implementation-planning detail); the ESP32's manual-override
 behavior is untouched.
 
-**Positioning.** GPS-only ([SEN-6](../../phase2/inputs/03-sensors-compute-electronics.md),
-~decimeter accuracy target). No wheel encoders or IMU for Phase 2 MP-1
-— position between fixes is "last known GPS fix."
+**Positioning.** GPS-only ([SEN-6](../../phase2/inputs/03-sensors-compute-electronics.md)),
+using a standard (non-RTK) GPS module targeting decimeter-ish accuracy
+under good sky view — RTK would need a fixed base station or a paid
+correction service for centimeter-level fixes, not justified unless
+decimeter accuracy proves insufficient in practice. Positions are
+reported to 6 decimal places for consistency across telemetry and
+obstacle records. No wheel encoders or IMU for Phase 2 MP-1 — position
+between fixes is "last known GPS fix."
 
 **Sensing.** Mast-mounted ultrasonic ([SEN-1](../../phase2/inputs/03-sensors-compute-electronics.md),
 bearing + range) and the Pi AI Camera ([SEN-3](../../phase2/inputs/03-sensors-compute-electronics.md),
-type classification) for obstacle detection. Bump sensors ([SEN-4](../../phase2/inputs/03-sensors-compute-electronics.md))
-as a last-resort contact trigger. No LiDAR in this mission package.
+type classification) attach to the Pi — MP-1's low travel speed makes
+Pi-round-trip latency acceptable for obstacle detection and mapping.
+Bump sensors ([SEN-4](../../phase2/inputs/03-sensors-compute-electronics.md))
+attach directly to the ESP32 instead, so contact triggers an immediate
+stop with no round-trip through the Pi; the ESP32 relays the bump event
+up to the Pi for logging. No LiDAR in this mission package.
+
+No separate AI HAT — the Pi AI Camera already does its own edge
+classification, so an inference accelerator solves a problem MP-1
+doesn't have. No NVMe HAT — the obstacle list and telemetry log are far
+too small to need it. Both are worth revisiting if a later mission's
+needs (e.g. MP-2 image retention) outgrow onboard storage/compute.
 
 **Mast.** Before committing to a custom design, evaluate reusing the
 4tronix M.A.R.S. Rover mast — it already integrates ultrasonic, a
@@ -83,6 +100,50 @@ ultrasonic mast wiring, and a GPS module very likely force the PCB
 respin already flagged in [CON-B4](../../phase2/inputs/05-assumptions-decisions.md),
 plus the larger payload bay ([PLT-5](../../phase2/inputs/04-physical-platform.md))
 needed to physically fit the Pi.
+
+## Command Channel
+
+The Architecture section above covers rover → Mongo data flow; this
+covers the reverse direction — UI → rover commands, including
+mid-mission interrupts (a gap in the original pass).
+
+**Mechanism.** The UI writes commands to a lightweight queue on the
+local backend. The rover polls that queue frequently (on the order of
+seconds) whenever WiFi is connected — command payloads are tiny, so
+this doesn't conflict with the battery-conservation reasoning behind
+checkpoint-only telemetry/obstacle sync. A command issued while the
+rover is briefly unreachable simply waits in the queue until the next
+successful poll, rather than being lost.
+
+**Command set for MP-1.** Start sweep, pause sweep, resume sweep, stop/
+abort sweep, abort-and-return-home, update geofence (applied to the
+next run — not a mid-sweep boundary change). A broader command
+vocabulary (e.g. switching mission packages) is a [CAP-7](../../phase2/inputs/02-capabilities.md)
+concern for later missions, not MP-1.
+
+**Interruption, revisited.** The "manual stop" branch in Mission Flow's
+Interruption paragraph is this mechanism — an operator-issued pause/stop
+command, handled identically to a Bingo Fuel trigger from the rover's
+perspective (save progress locally, treat as resumable).
+
+## Software & Firmware Updates
+
+Not proposed for use during an active mission — this is about avoiding
+physical USB connections for routine updates, not live/hot updates.
+
+**Pi software.** New versions are staged (downloaded) whenever WiFi is
+available. Applying a staged update — restarting the Pi's mission
+service on the new version — requires an explicit operator-issued
+"apply update" command from the UI, and only while the rover is idle
+(not on a mission). Exact deployment mechanism (container image pull
+vs. git-based deploy) is an implementation-planning decision.
+
+**ESP32 firmware.** The Pi acts as the flash relay: it downloads new
+ESP32 firmware over WiFi, then flashes it to the ESP32 over the existing
+Pi↔ESP32 serial link using the same protocol a USB-connected laptop uses
+today (esptool-class serial flashing) — no physical cable required.
+Same operator-triggered, idle-only gating as Pi software updates, since
+this touches the real-time drive controller.
 
 ## Mission Flow
 
@@ -174,15 +235,44 @@ a concrete model.
 
 **Record shape.** Fixed envelope (`rover_id`, `timestamp` UTC +
 `local_tz_offset`, `sweep_session_id`, `sequence_number`) wrapping a
-flexible `metrics` key-value map — e.g. `{"gps_lat": ..., "gps_fix_quality":
-..., "battery_voltage": ..., "wifi_rssi": ..., "nav_mode": "sweep",
-"waypoint_index": 5, ...}`. New metric keys (cell-level voltage once
-[PWR-1](../../phase2/inputs/03-sensors-compute-electronics.md) lands,
-temperature once a sensor exists, etc.) just appear in the map — no
-schema change or migration. MP-1 populates only the fields its actual
-hardware supports (GPS, pack-level battery, motor/servo status, WiFi
-signal, nav status, mission status, error/event log); fields with no
-sensor behind them yet are simply absent, not null placeholders.
+flexible `metrics` map. Repeated same-kind sensors use grouped arrays
+rather than flat numbered keys, so a consumer can iterate without
+knowing the count in advance:
+
+```json
+{
+  "gps_lat": 38.123456, "gps_lon": -85.654321, "gps_fix_quality": "3d",
+  "battery_voltage": 11.8, "wifi_rssi": -52,
+  "nav_mode": "sweep", "waypoint_index": 5,
+  "motors": [{"id": 1, "current": 0.8}, {"id": 2, "current": 0.9}]
+}
+```
+
+New metric keys (cell-level voltage once [PWR-1](../../phase2/inputs/03-sensors-compute-electronics.md)
+lands, temperature once a sensor exists, etc.) just appear in the map —
+no schema change or migration.
+
+**Expected metrics & missing-value semantics.** A metric can be in one
+of three states, and the distinction matters for troubleshooting:
+present with a value; *expected but missing* (the hardware should have
+produced it and didn't — something's wrong); or *not applicable* (this
+rover/mission doesn't have that sensor at all). The Pi tags the second
+case explicitly at write time — e.g. `"battery_voltage": "missing"` —
+using a sentinel rather than a bare `null`, so it's visibly different
+from a value. The third case is simply omitted from the map entirely;
+nothing is written for metrics outside the current sensor
+configuration. This only works if the Pi knows what to expect for the
+current run, which is what the sensor manifest below provides.
+
+**Sensor manifest.** The UI maintains two things that combine into
+"expected metrics for this run": a per-rover sensor manifest (what
+hardware is actually installed — useful once builds vary, or a sensor
+is temporarily removed for maintenance) and a per-mission-package
+expected-metrics list (MP-1 expects GPS, pack-level battery, motor/
+servo status, WiFi signal, nav status, mission status, error/event log).
+An operator can confirm or edit the manifest through the UI. Both the
+Pi (for missing-value tagging) and the backend (for review/alerting on
+gaps) use the same combined expectation.
 
 **Two tiers.**
 - **Live summary** — low-rate (position, battery, nav mode,
@@ -251,11 +341,32 @@ duplicates, no gaps.
 **Telemetry verification.** Live-summary telemetry is observable in
 real time during a run. The detailed log's sampling rate visibly drops
 while idle vs. driving. After sync, the detailed log lands correctly in
-the Mongo time-series collection with no data loss.
+the Mongo time-series collection with no data loss. A deliberately
+failed sensor read produces the `"missing"` sentinel on its metric; a
+metric outside the current sensor manifest is correctly omitted rather
+than written as missing — the two cases must be distinguishable in the
+synced record.
+
+**Command channel (happy path + negative).** Issuing pause/resume/stop/
+abort-home commands mid-sweep through the queue is picked up and acted
+on within the expected poll interval. **Negative:** a command issued
+while the rover is briefly unreachable (WiFi dropped) is not lost — it's
+applied on the next successful poll, not silently discarded. **Negative:**
+a stale or conflicting command (e.g. "resume" arriving after an
+abort-home is already underway) is handled gracefully — rejected or
+ignored with a clear reason — not treated as valid and left to corrupt
+the mission state.
+
+**Software/firmware updates (happy path + negative).** An operator
+stages and applies a Pi software update (or ESP32 firmware, relayed
+through the Pi) while idle; the rover comes back functional on the new
+version. **Negative:** an attempt to apply a staged update while a
+mission is active is rejected with a clear error, not silently queued
+and not silently applied mid-mission.
 
 **UI sanity.** The local UI reads obstacle and telemetry data from
-Mongo and supports the permanent-candidate confirm/reject workflow end
-to end.
+Mongo and supports the permanent-candidate confirm/reject workflow, and
+the sensor-manifest confirm/edit workflow, end to end.
 
 ## Open items for implementation planning
 
@@ -271,6 +382,15 @@ the planning/implementation phase:
   command)
 - PCB respin scope: full accounting of new connectors once Pi
   integration, mast sensors, and GPS are finalized
+- ESP32 GPIO pin-budget check for the bump sensors against CON-B2/B3's
+  already-limited free pins — may need an I2C GPIO expander if pins run
+  short
+- Command-queue implementation: exact poll interval, queue storage/
+  transport on the local backend
+- Pi software deployment mechanism: container image pull vs. git-based
+  deploy
+- Exact "missing" sentinel convention, applied consistently across all
+  metrics
 
 ## Not in scope for MP-1
 
@@ -278,3 +398,5 @@ the planning/implementation phase:
 - Wheel encoders / IMU — deferred; GPS-only for now
 - Map sector segmentation ([CAP-3](../../phase2/inputs/02-capabilities.md)) — single geofenced area only
 - Cloud-hosted UI — local container hosting only
+- RTK GPS — standard module only, revisit if accuracy proves insufficient
+- Pi AI HAT / NVMe HAT — no need identified for MP-1's workload
