@@ -486,7 +486,11 @@ the sensor-manifest confirm/edit workflow, end to end.
 These are real decisions but don't block the design — they're sized for
 the planning/implementation phase:
 
-- Pi ↔ ESP32 link: UART vs. USB
+- Pi ↔ ESP32 link: UART (direct 3-wire GPIO connection, no cable) vs.
+  USB (ESP32's native USB, enumerates as USB-serial). UART's soldered/
+  header connection is likely more vibration-resistant on a moving
+  rover than a friction-fit USB cable — worth weighing alongside pin
+  budget when this gets decided.
 - Exact mast reuse decision: confirm 4tronix mast height/load specs
   against MP-1's sensor payload before committing
 - Sync reconciliation mechanism: record-count vs. checksum
