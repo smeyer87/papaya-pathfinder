@@ -13,7 +13,7 @@
 - Extends `pathfinder-autonomous/pi-mission/` — same package, same stack as the two prior plans.
 - No hardware I/O, no persistence, no async/event-loop machinery. Every function here is synchronous and pure or operates on an explicit, injected state object (`SweepSession`) — testable without mocking a clock, a queue, or a network call.
 - Row spacing is a *detection-coverage* constraint, not a wheel-coverage one: bounded by the sensor's effective detection width, not by trying to physically drive over every square meter. (Design spec: Route Planning notes; MP-1 planning discussion on `row_spacing_m`.)
-- The row-to-row turn doesn't need a wide turning radius by default — Phase 1's firmware already supports spin-in-place (`setSpin()` in `firmware-elrs.ino`), so `rover_can_spin_in_place=True` is the expected default; the turn-diameter floor only matters if that assumption doesn't hold for a given rover build.
+- Turn style between rows is a caller-selectable tradeoff, not a hardware constraint: `spin_in_place` (Phase 1's `setSpin()`) needs negligible turning radius but can dig into soft terrain and costs more power than a `graceful` turn at speed, which needs real lateral room instead. `turn_style` defaults to `"spin_in_place"` but both are real options — this isn't mandating one over the other. See `row_spacing.py`.
 - Exclusion-zone response threshold is "under one rover-length deep → auto-reverse, otherwise wait for help" — exactly at one rover-length counts as "otherwise" (wait for help), not auto-reverse; there's no ambiguity band. (Design spec: Mission Flow — Exclusion-zone intrusion.)
 - GPS-loss response is "whichever safety bound is hit first" — grace period elapsed OR error-circle radius exceeded — not both required. (Design spec: Mission Flow — GPS loss/degradation.)
 
@@ -46,7 +46,7 @@ pathfinder-autonomous/
 - Test: `pathfinder-autonomous/pi-mission/tests/test_row_spacing.py`
 
 **Interfaces:**
-- Produces: `papaya_mission.row_spacing.derive_row_spacing_m(sensor_detection_width_m: float, rover_can_spin_in_place: bool = True, min_turn_diameter_m: float = 0.0) -> float`, raising `ValueError` on non-positive width or an infeasible turn-diameter/width combination. The mission-runtime plan (not yet written) calls this once per mission, feeding the result into `coverage_pattern.generate_coverage_pattern`.
+- Produces: `papaya_mission.row_spacing.{TurnStyle, derive_row_spacing_m(sensor_detection_width_m: float, turn_style: TurnStyle = "spin_in_place", min_turn_diameter_m: float | None = None) -> float}`, raising `ValueError` on non-positive width or an infeasible turn-diameter/width combination. `turn_style` and `min_turn_diameter_m` come from the active rover's record (Backend Core plan's `Rover.turn_style`/`Rover.min_turn_diameter_m`) — spin-in-place is a tight pivot (Phase 1 firmware's `setSpin()`) that costs more power and can dig into soft terrain (grass, etc.); a graceful/gradual turn avoids that but needs real lateral room to execute. This is a real choice, not a hardware constraint, which is why it's caller-selectable rather than inferred. The mission-runtime plan (not yet written) fetches the rover's `turn_style` once at mission start and calls this, feeding the result into `coverage_pattern.generate_coverage_pattern`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -57,15 +57,15 @@ import pytest
 from papaya_mission.row_spacing import derive_row_spacing_m
 
 
-def test_row_spacing_matches_sensor_width_when_rover_can_spin():
-    spacing = derive_row_spacing_m(sensor_detection_width_m=8.0, rover_can_spin_in_place=True)
+def test_row_spacing_matches_sensor_width_for_spin_in_place():
+    spacing = derive_row_spacing_m(sensor_detection_width_m=8.0, turn_style="spin_in_place")
 
     assert spacing == 8.0
 
 
-def test_row_spacing_matches_sensor_width_when_turn_diameter_fits():
+def test_row_spacing_matches_sensor_width_when_graceful_turn_fits():
     spacing = derive_row_spacing_m(
-        sensor_detection_width_m=8.0, rover_can_spin_in_place=False, min_turn_diameter_m=3.0
+        sensor_detection_width_m=8.0, turn_style="graceful", min_turn_diameter_m=3.0
     )
 
     assert spacing == 8.0
@@ -76,11 +76,19 @@ def test_rejects_non_positive_sensor_width():
         derive_row_spacing_m(sensor_detection_width_m=0.0)
 
 
-def test_rejects_infeasible_turn_diameter_when_cannot_spin():
+def test_rejects_infeasible_graceful_turn_diameter():
     with pytest.raises(ValueError):
         derive_row_spacing_m(
-            sensor_detection_width_m=2.0, rover_can_spin_in_place=False, min_turn_diameter_m=5.0
+            sensor_detection_width_m=2.0, turn_style="graceful", min_turn_diameter_m=5.0
         )
+
+
+def test_graceful_turn_without_a_diameter_is_treated_as_unconstrained():
+    # No min_turn_diameter_m given -- nothing to check against, so it
+    # falls back to the sensor-width spacing rather than erroring.
+    spacing = derive_row_spacing_m(sensor_detection_width_m=8.0, turn_style="graceful")
+
+    assert spacing == 8.0
 ```
 
 - [ ] **Step 2: Run the tests and verify they fail**
@@ -93,33 +101,48 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'papaya_mission.row_spa
 ```python
 # pathfinder-autonomous/pi-mission/papaya_mission/row_spacing.py
 """Derives coverage-pattern row spacing from sensor detection width and
-rover turning capability. See design spec's Route Planning notes.
+rover turning style. See design spec's Route Planning notes.
 """
 from __future__ import annotations
+
+from typing import Literal
+
+TurnStyle = Literal["spin_in_place", "graceful"]
 
 
 def derive_row_spacing_m(
     sensor_detection_width_m: float,
-    rover_can_spin_in_place: bool = True,
-    min_turn_diameter_m: float = 0.0,
+    turn_style: TurnStyle = "spin_in_place",
+    min_turn_diameter_m: float | None = None,
 ) -> float:
-    """Row spacing is bounded above by the sensor's effective detection
-    width, so adjacent rows' scan coverage meets with no gap between
-    them -- this is a detection-coverage sweep, not a wheel-coverage
-    lawnmower. It's bounded below by the rover's minimum turning
-    diameter, unless it can spin in place (Phase 1 firmware's
-    setSpin()), in which case the row-to-row turn doesn't need a wide
-    radius and the floor doesn't apply.
+    """Row spacing is set by the sensor's effective detection width, so
+    adjacent rows' scan coverage meets with no gap -- this is a
+    detection-coverage sweep, not a wheel-coverage lawnmower, and that
+    part doesn't change with turn style.
+
+    Turn style affects only a feasibility check. spin_in_place (Phase 1
+    firmware's setSpin()) needs negligible turning radius, so it always
+    fits -- though it can dig into soft terrain and costs more power
+    than a gradual turn at speed. graceful needs `min_turn_diameter_m`
+    of lateral room; if that's wider than the sensor's detection width,
+    the row-to-row turn won't fit within the coverage spacing alone.
+    This surfaces as an error rather than silently widening the spacing
+    for you -- accepting coverage overlap to make room is a real
+    tradeoff the caller should decide on, not something to default past.
     """
     if sensor_detection_width_m <= 0:
         raise ValueError(
             f"sensor_detection_width_m must be > 0, got {sensor_detection_width_m}"
         )
-    if not rover_can_spin_in_place and min_turn_diameter_m > sensor_detection_width_m:
+    if (
+        turn_style == "graceful"
+        and min_turn_diameter_m is not None
+        and min_turn_diameter_m > sensor_detection_width_m
+    ):
         raise ValueError(
-            f"rover's minimum turn diameter ({min_turn_diameter_m}m) exceeds the "
-            f"sensor detection width ({sensor_detection_width_m}m) -- full detection "
-            "coverage isn't achievable with drivable row-to-row turns at this spacing"
+            f"a graceful turn needs {min_turn_diameter_m}m of room, wider than the "
+            f"{sensor_detection_width_m}m sensor detection width -- either widen row "
+            "spacing (accepting coverage overlap) or use spin_in_place turns instead"
         )
     return sensor_detection_width_m
 ```
@@ -127,7 +150,7 @@ def derive_row_spacing_m(
 - [ ] **Step 4: Run the tests and verify they pass**
 
 Run: `pytest tests/test_row_spacing.py -v`
-Expected: PASS (4 passed)
+Expected: PASS (5 passed)
 
 - [ ] **Step 5: Commit**
 
@@ -365,7 +388,7 @@ git commit -m "feat(pi-mission): add sweep-session state machine"
 - Test: `pathfinder-autonomous/pi-mission/tests/test_exclusion_decision.py`
 
 **Interfaces:**
-- Produces: `papaya_mission.exclusion_decision.decide_exclusion_response(intrusion_depth_m: float, rover_length_m: float) -> Literal["auto_reverse", "wait_for_help"]`. The mission-runtime plan calls this with the depth from `exclusion_check.find_intruded_exclusion` (from the Position & Coverage Geometry plan).
+- Produces: `papaya_mission.exclusion_decision.decide_exclusion_response(intrusion_depth_m: float, rover_length_m: float) -> Literal["auto_reverse", "wait_for_help"]`. `rover_length_m` comes from the active rover's `Rover.length_m` (Backend Core plan), fetched once by the mission-runtime plan at mission start — not a global or hardcoded value. The mission-runtime plan calls this with the depth from `exclusion_check.find_intruded_exclusion` (from the Position & Coverage Geometry plan).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -578,7 +601,7 @@ START = datetime(2026, 9, 24, 12, 0, 0, tzinfo=timezone.utc)
 
 def test_full_sweep_lifecycle_with_interruption_and_safety_decisions():
     row_spacing = derive_row_spacing_m(
-        sensor_detection_width_m=20.0, rover_can_spin_in_place=True
+        sensor_detection_width_m=20.0, turn_style="spin_in_place"
     )
     raw_pattern = generate_coverage_pattern(FIELD, exclusions=[], row_spacing_m=row_spacing)
     pattern = [Waypoint(order=i, position=pos) for i, pos in enumerate(raw_pattern)]
@@ -655,7 +678,8 @@ backend command-channel plans exist to plug into.
   `resume_validation.py` — obstacle detection, classification, and
   resume-pass reconciliation.
 - `row_spacing.py` — derives coverage row spacing from sensor detection
-  width and rover turning capability.
+  width; validates it against the rover's chosen turn style
+  (spin-in-place vs. graceful) and turn diameter.
 - `sweep_session.py` — the sweep-session state machine (start/
   interrupt/resume/complete).
 - `exclusion_decision.py` — auto-reverse vs. wait-for-help.
