@@ -18,7 +18,9 @@ MP-1-specific, and later mission specs (MP-2/3/4) should build on them
 rather than re-litigate:
 
 - Hybrid compute: Raspberry Pi 5 + existing ESP32-S3 (resolves [Q-1](../../phase2/inputs/05-assumptions-decisions.md))
-- GPS-only positioning, no wheel encoders/IMU for now
+- GPS + basic IMU dead reckoning (no wheel encoders) for positioning,
+  with an explicit error-circle uncertainty model
+- GeoJSON as the standard shape for all position/polygon data
 - Store-and-forward data sync, checkpointed on every Home return
 - Two-tier telemetry (live summary + bulk detailed log)
 - Local, container-hosted Management UI reading from MongoDB
@@ -53,23 +55,64 @@ Pi and ESP32 communicate over a local link (UART or USB — exact choice
 is an implementation-planning detail); the ESP32's manual-override
 behavior is untouched.
 
-**Positioning.** GPS-only ([SEN-6](../../phase2/inputs/03-sensors-compute-electronics.md)),
-using a standard (non-RTK) GPS module targeting decimeter-ish accuracy
-under good sky view — RTK would need a fixed base station or a paid
-correction service for centimeter-level fixes, not justified unless
-decimeter accuracy proves insufficient in practice. Positions are
-reported to 6 decimal places for consistency across telemetry and
-obstacle records. No wheel encoders or IMU for Phase 2 MP-1 — position
-between fixes is "last known GPS fix."
+**Why not consolidate onto one board.** Revisited given the PCB respin
+is happening anyway: a single Pi-only board was already ruled out in
+the original compute decision, and that reasoning doesn't change with
+the respin — Linux on the Pi isn't a real-time OS, and driving
+PWM/servo/CRSF timing from Pi userspace risks the jitter a dedicated
+microcontroller avoids. Replacing the ESP32-S3 with a Raspberry Pi Pico
+(same vendor, still a two-controller split) is technically viable, but
+it means rewriting the existing, working real-time drive/servo/CRSF
+firmware from scratch on a different chip family for a
+tooling-consistency benefit, not a capability one — not a favorable
+trade against the risk of reintroducing bugs in code that already
+works. Keeping the ESP32-S3 stands.
 
-**Sensing.** Mast-mounted ultrasonic ([SEN-1](../../phase2/inputs/03-sensors-compute-electronics.md),
-bearing + range) and the Pi AI Camera ([SEN-3](../../phase2/inputs/03-sensors-compute-electronics.md),
-type classification) attach to the Pi — MP-1's low travel speed makes
-Pi-round-trip latency acceptable for obstacle detection and mapping.
-Bump sensors ([SEN-4](../../phase2/inputs/03-sensors-compute-electronics.md))
+**Positioning.** GPS ([SEN-6](../../phase2/inputs/03-sensors-compute-electronics.md))
+plus a basic IMU, fused for dead reckoning between fixes.
+
+- **GPS accuracy, corrected.** A standard (non-RTK) hobby-grade GPS
+  module realistically delivers ~1–3 m accuracy, not the decimeter
+  figure this spec originally assumed — decimeter/centimeter accuracy
+  is an RTK-only capability (fixed base station or paid correction
+  service), not justified for MP-1's cost/complexity budget. Positions
+  are still reported to 6 decimal places (precision) for consistency,
+  but that precision does not imply that level of real-world accuracy.
+- **IMU (reopens the earlier "no IMU" call).** A basic IMU
+  (accelerometer + gyro, optionally magnetometer for heading) is added.
+  Its accelerometer gives a short-term velocity estimate via
+  integration, used with heading and elapsed time to dead-reckon
+  position between GPS fixes — this reflects the rover's actual motion
+  (wheel slip, terrain, speed variation) rather than assuming its
+  commanded speed was achieved exactly. Still no wheel encoders. Pure
+  inertial integration is known to drift within seconds without
+  correction, which is acceptable here only because it's reset against
+  each new GPS fix and only needs to bridge the gap *between* fixes, not
+  navigate independently for any length of time.
+- **Error circle.** Position carries a growing uncertainty radius
+  between GPS fixes (widest just before the next fix, reset to the
+  GPS's own accuracy figure at each fix). Exclusion-zone-proximity and
+  auto-reverse decisions (Mission Flow) use the *outer edge* of this
+  circle, not the bare point estimate — with ~1–3 m raw GPS uncertainty
+  potentially comparable to the rover's own length, using the point
+  estimate alone could make an intrusion look smaller than it actually
+  is.
+
+**Sensing.** GPS ([SEN-6](../../phase2/inputs/03-sensors-compute-electronics.md)),
+the IMU, mast-mounted ultrasonic ([SEN-1](../../phase2/inputs/03-sensors-compute-electronics.md),
+bearing + range), and the Pi AI Camera ([SEN-3](../../phase2/inputs/03-sensors-compute-electronics.md),
+type classification) all attach to the Pi — MP-1's low travel speed
+makes Pi-round-trip latency acceptable for obstacle detection and
+mapping. Bump sensors ([SEN-4](../../phase2/inputs/03-sensors-compute-electronics.md))
 attach directly to the ESP32 instead, so contact triggers an immediate
-stop with no round-trip through the Pi; the ESP32 relays the bump event
-up to the Pi for logging. No LiDAR in this mission package.
+stop with no round-trip through the Pi. Multiple bump sensors share a
+single I2C bus (SDA/SCL + one interrupt pin) via an I2C GPIO-expander
+chip, rather than consuming one dedicated GPIO per sensor — I2C is a
+standard two-wire shared bus available on both the ESP32 and the Pi,
+not Pi-exclusive, and the expander's hardware interrupt line keeps the
+ESP32's response effectively immediate regardless of how many sensors
+are on the bus. The ESP32 relays the bump event up to the Pi for
+logging. No LiDAR in this mission package.
 
 No separate AI HAT — the Pi AI Camera already does its own edge
 classification, so an inference accelerator solves a problem MP-1
@@ -98,10 +141,14 @@ host — no cloud hosting cost for the UI process itself, works
 offline for local operations, and matches the store-and-forward pattern.
 
 **Wiring/PCB impact.** New UART/USB link to the Pi, AI camera ribbon,
-ultrasonic mast wiring, and a GPS module very likely force the PCB
-respin already flagged in [CON-B4](../../phase2/inputs/05-assumptions-decisions.md),
+ultrasonic mast wiring, a GPS module, and the IMU very likely force the
+PCB respin already flagged in [CON-B4](../../phase2/inputs/05-assumptions-decisions.md),
 plus the larger payload bay ([PLT-5](../../phase2/inputs/04-physical-platform.md))
-needed to physically fit the Pi.
+needed to physically fit the Pi. The respin is scoped to guarantee
+sufficient GPIO headroom on the ESP32 for known and near-term sensor
+needs; the I2C bumper bus above is the primary lever if a dedicated-pin
+sensor is ever added later, with the respin itself as the fallback if
+I2C expansion isn't enough.
 
 ## Rover Identity & Fleet
 
@@ -188,12 +235,14 @@ lawnmower-style coverage pattern of waypoints, routed to avoid any
 exclusion zones inside the fence. A resumed mission starts from its
 saved coverage checkpoint instead of regenerating from scratch.
 
-**Execution loop.** The rover drives waypoint-to-waypoint on GPS-only
-positioning. While moving, ultrasonic and the AI camera continuously
-scan for obstacles:
+**Execution loop.** The rover drives waypoint-to-waypoint on the fused
+GPS+IMU position estimate (Architecture: Positioning). While moving,
+ultrasonic and the AI camera continuously scan for obstacles:
 
-- **Detection.** Tag the obstacle with position (GPS fix + bearing/
-  range), a camera-classified type, and a permanent/temporary flag from
+- **Detection.** Tag the obstacle with position (fused GPS/IMU fix +
+  bearing/range, plus the error circle's current radius as
+  `position_uncertainty_m`), a camera-classified type, and a
+  permanent/temporary flag from
   a type heuristic (barrel/post/fence-type → permanent-candidate;
   chair/vehicle-type → temporary). Temporary tags go straight into the
   local obstacle list. Permanent-candidates are stored the same way but
@@ -202,9 +251,11 @@ scan for obstacles:
 - **Bump contact.** Immediate stop, back off ([CAP-9](../../phase2/inputs/02-capabilities.md)),
   log an obstacle at the contact point with a low-confidence
   "contact-only" type, flagged for review.
-- **GPS loss/degradation.** Continue on last-known heading for a short
-  grace period; stop and send a high-priority alert if it doesn't
-  reacquire.
+- **GPS loss/degradation.** Continue on IMU-based dead reckoning
+  (heading + accelerometer-derived velocity) for a short grace period,
+  with the error circle growing throughout; stop and send a
+  high-priority alert if GPS doesn't reacquire before the grace period
+  elapses or the error circle exceeds a safe threshold.
 - **Exclusion-zone intrusion** (e.g. from GPS drift). Stop and alert,
   per [CAP-2](../../phase2/inputs/02-capabilities.md)'s existing rule:
   under one rover-length and easily reversible → auto-reverse,
@@ -232,33 +283,51 @@ already in MongoDB.
 
 ## Data Model
 
+All position and polygon data in the platform uses GeoJSON
+(`Point`/`Polygon`/etc.) — MongoDB's native geospatial format, enabling
+2dsphere indexes and geo queries (`$geoWithin`, `$near`,
+`$geoIntersects`) directly, which matters most for
+[CAP-2](../../phase2/inputs/02-capabilities.md)'s exclusion-zone
+containment checks. **Coordinate order is `[longitude, latitude]`** —
+the opposite of the lat/long ordering used casually elsewhere — worth
+calling out since it's a classic source of silent bugs. Locally on the
+rover (SQLite), the same GeoJSON structures are stored as serialized
+JSON text; no local geospatial indexing is needed given the
+single-sector scope.
+
 **Rover.** `id` (Mongo ObjectId), `name` (human-editable display name),
 `sensor_manifest` (installed hardware — feeds the telemetry
 missing-vs-not-applicable logic below), `supported_mission_packages`
 (list of MP IDs this build can run), `status` (active / inactive, per
 the one-active-rover rule above), `created_at`/`updated_at`, `notes`.
 
-**Geofence.** `id`, `type` (inclusive/exclusive), `vertices` (ordered
-lat/long list), `name`, `created_at`/`updated_at`. One inclusive fence
-plus zero or more exclusive fences define MP-1's operating area. Source
-of truth is MongoDB; the rover keeps a local cached copy for offline
-operation. Sector segmentation ([CAP-3](../../phase2/inputs/02-capabilities.md))
-is deferred — v1 treats the whole geofenced area as a single unit.
+**Geofence.** `id`, `type` (inclusive/exclusive), `boundary` (a GeoJSON
+`Polygon`), `name`, `created_at`/`updated_at`. One inclusive fence plus
+zero or more exclusive fences define MP-1's operating area. Source of
+truth is MongoDB, with a 2dsphere index on `boundary` supporting the
+containment queries behind exclusion-zone checks; the rover keeps a
+local cached copy for offline operation. Sector segmentation
+([CAP-3](../../phase2/inputs/02-capabilities.md)) is deferred — v1
+treats the whole geofenced area as a single unit.
 
 **Sweep session** (enables resume). `id`, `rover_id`, `geofence_id`, `status`
 (in_progress / interrupted / completed), `pattern` (the generated
-waypoint list), `last_completed_waypoint_index`, `started_at`,
-`interrupted_at`, `completed_at`. Interruption persists this record
-locally with `status=interrupted` and the progress marker; resume looks
-it up and continues from `last_completed_waypoint_index + 1`.
+waypoint list — an ordered array of `{order, position}`, where each
+`position` is a GeoJSON `Point`), `last_completed_waypoint_index`,
+`started_at`, `interrupted_at`, `completed_at`. Interruption persists
+this record locally with `status=interrupted` and the progress marker;
+resume looks it up and continues from `last_completed_waypoint_index + 1`.
 
-**Obstacle record.** `id`, `sweep_session_id`, `position` (GPS lat/long,
-+ raw bearing/range), `type` (camera classification label),
+**Obstacle record.** `id`, `sweep_session_id`, `position` (a GeoJSON
+`Point`, plus raw bearing/range as separate fields),
+`position_uncertainty_m` (radius from the error-circle model at
+detection time), `type` (camera classification label),
 `classification_confidence`, `detection_method` (ultrasonic+camera /
 contact-only), `status` (temporary / permanent-pending /
 permanent-confirmed), `first_detected_at`, `last_confirmed_at` (updated
 by resume-validation), `review_status` (pending / confirmed / rejected),
 `reviewed_by`, `reviewed_at`, `synced_at` (null until pushed to Mongo).
+A 2dsphere index on `position` supports proximity queries.
 
 **Local vs. Mongo storage.** The rover keeps a local embedded store
 (e.g. SQLite on the Pi) as the working copy during a mission. MongoDB
@@ -282,7 +351,8 @@ knowing the count in advance:
 
 ```json
 {
-  "gps_lat": 38.123456, "gps_lon": -85.654321, "gps_fix_quality": "3d",
+  "position": {"type": "Point", "coordinates": [-85.654321, 38.123456]},
+  "position_uncertainty_m": 1.4, "gps_fix_quality": "3d",
   "battery_voltage": 11.8, "wifi_rssi": -52,
   "nav_mode": "sweep", "waypoint_index": 5,
   "motors": [{"id": 1, "current": 0.8}, {"id": 2, "current": 0.9}]
@@ -354,10 +424,12 @@ data. Total Mongo records should match a full uninterrupted run — no
 duplicates, no gaps.
 
 **Safety behaviors (happy path + negative).**
-- GPS loss/degradation → continues briefly on last heading, then stops
-  and alerts if not reacquired. **Negative test needs a debug hook** to
-  force a "no fix"/degraded-fix state on demand — testing this only
-  when GPS happens to actually drop isn't repeatable.
+- GPS loss/degradation → continues briefly on IMU-based dead reckoning
+  (error circle growing), then stops and alerts if GPS doesn't
+  reacquire before the grace period or uncertainty threshold is hit.
+  **Negative test needs a debug hook** to force a "no fix"/degraded-fix
+  state on demand — testing this only when GPS happens to actually drop
+  isn't repeatable.
 - Exclusion-zone intrusion → stop + alert, correct
   auto-reverse-vs-wait-for-help behavior at the one-rover-length
   threshold.
@@ -423,9 +495,9 @@ the planning/implementation phase:
   command)
 - PCB respin scope: full accounting of new connectors once Pi
   integration, mast sensors, and GPS are finalized
-- ESP32 GPIO pin-budget check for the bump sensors against CON-B2/B3's
-  already-limited free pins — may need an I2C GPIO expander if pins run
-  short
+- I2C GPIO-expander part selection for the bump-sensor bus
+- IMU part selection, and the exact error-circle growth-rate/threshold
+  values used for the GPS-loss grace period and exclusion-zone margin
 - Command-queue implementation: exact poll interval, queue storage/
   transport on the local backend
 - Pi software deployment mechanism: container image pull vs. git-based
@@ -440,7 +512,7 @@ the planning/implementation phase:
 ## Not in scope for MP-1
 
 - LiDAR ([SEN-2](../../phase2/inputs/03-sensors-compute-electronics.md)) — deferred past v1
-- Wheel encoders / IMU — deferred; GPS-only for now
+- Wheel encoders — deferred; IMU + GPS dead reckoning is now in scope (see Positioning)
 - Map sector segmentation ([CAP-3](../../phase2/inputs/02-capabilities.md)) — single geofenced area only
 - Cloud-hosted UI — local container hosting only
 - RTK GPS — standard module only, revisit if accuracy proves insufficient
