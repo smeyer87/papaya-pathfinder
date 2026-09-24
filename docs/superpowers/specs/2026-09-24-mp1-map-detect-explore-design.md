@@ -502,6 +502,8 @@ the planning/implementation phase:
 - I2C GPIO-expander part selection for the bump-sensor bus
 - IMU part selection, and the exact error-circle growth-rate/threshold
   values used for the GPS-loss grace period and exclusion-zone margin
+- Battery-backed RTC module selection (recommended addition, not yet in
+  the BOM — see [`docs/reference/time-synchronization.md`](../../reference/time-synchronization.md))
 - Command-queue implementation: exact poll interval, queue storage/
   transport on the local backend
 - Pi software deployment mechanism: container image pull vs. git-based
