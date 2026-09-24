@@ -522,6 +522,13 @@ the planning/implementation phase:
 - Map sector segmentation ([CAP-3](../../phase2/inputs/02-capabilities.md)) — single geofenced area only
 - Cloud-hosted UI — local container hosting only
 - RTK GPS — standard module only, revisit if accuracy proves insufficient
-- Pi AI HAT / NVMe HAT — no need identified for MP-1's workload
+- Pi AI HAT — no need identified for MP-1's workload
+- NVMe HAT — not required for MP-1's own storage needs (obstacle list +
+  telemetry are small), but worth revisiting soon, not dismissing
+  outright: retaining raw images/video for low-confidence-classification
+  debugging, and MP-2's chicken individual-ID reference image library,
+  both plausibly need real storage volume onboard storage doesn't
+  comfortably provide. Hardware (HAT + drives) is already on hand.
+  Revisit before or alongside MP-2. (User note, 2026-09-24.)
 - Concurrent multi-rover operation and inter-rover position sharing for
   conflict avoidance — roadmap item, see Rover Identity & Fleet

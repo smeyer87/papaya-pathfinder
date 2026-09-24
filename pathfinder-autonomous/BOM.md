@@ -12,6 +12,7 @@ not a replacement.
 |---|---|
 | **Verified** | Purchased, in hand, measured/confirmed working (Phase 1 build) |
 | **Purchased — Unverified** | In hand, but not yet confirmed equivalent/working |
+| **On Hand — Design Pending** | Owned already, but not yet decided whether/how it's used |
 | **Pending Selection** | Required or recommended for Phase 2; no specific part chosen yet |
 
 Descriptive/requirements-only entries come first for anything still
@@ -82,6 +83,21 @@ expected to carry over into the Phase 2 build unchanged.
   matches the measured `ESP32S3_DevKit_2x1x22_split` footprint above
   before relying on it for a build — "purports to be the same
   component" isn't confirmed yet.
+
+---
+
+## On Hand — Design Decision Pending
+
+Owned already; not yet decided whether Phase 2 actually uses them.
+
+- **Raspberry Pi NVMe HAT + NVMe drive(s)** — not required for MP-1's
+  own storage needs (obstacle list + telemetry are small — see the
+  [design spec](../docs/superpowers/specs/2026-09-24-mp1-map-detect-explore-design.md)'s
+  "Not in scope for MP-1"), but a real consideration for image/video
+  retention: raw captures for low-confidence-classification debugging,
+  and MP-2's chicken individual-ID reference image library, both
+  plausibly need real storage volume beyond what's otherwise available.
+  Not mandated yet — revisit before or alongside MP-2.
 
 ---
 
