@@ -493,13 +493,20 @@ the planning/implementation phase:
   budget when this gets decided.
 - Exact mast reuse decision: confirm 4tronix mast height/load specs
   against MP-1's sensor payload before committing
-- ~~Sync reconciliation mechanism: record-count vs. checksum~~ — resolved:
-  neither. Sweep sessions, obstacles, and telemetry all use
-  client-generated IDs (UUIDs assigned by the Pi at creation time,
-  before connectivity is guaranteed), making sync naturally idempotent —
-  obstacles/sessions upsert by ID, telemetry inserts with duplicate-key
-  errors on retry treated as already-synced. See the [Backend Obstacle &
-  Telemetry Sync plan](../plans/2026-09-24-mp1-backend-obstacle-telemetry-sync.md).
+- ~~Sync reconciliation mechanism: record-count vs. checksum~~ — resolved
+  for the "did every record arrive" question: neither. Sweep sessions,
+  obstacles, and telemetry all use client-generated IDs (UUIDs assigned
+  by the Pi at creation time, before connectivity is guaranteed), making
+  sync naturally idempotent — obstacles/sessions upsert by ID, telemetry
+  inserts with duplicate-key errors on retry treated as already-synced.
+  See the [Backend Obstacle & Telemetry Sync plan](../plans/2026-09-24-mp1-backend-obstacle-telemetry-sync.md).
+  A separate question — content-level integrity (did a record arrive
+  *uncorrupted*, not just present) — was also considered and explicitly
+  declined for now: HTTPS/TLS already checksums data in transit, this
+  data isn't sensitive, and field-level corruption risk over that
+  transport is low. No per-record hashing/checksumming layer is being
+  added preemptively; revisit only if corruption actually shows up in
+  practice. (User decision, 2026-09-24.)
 - Local SQLite commit cadence on the Pi: batching writes on the order of
   "up to about a minute" is fine — gentle on the microSD card's write
   endurance, and it bounds worst-case rework on resume to about that
