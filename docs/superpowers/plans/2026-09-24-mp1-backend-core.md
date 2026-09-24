@@ -4,15 +4,15 @@
 
 **Goal:** Build the local, container-hosted backend data layer and API that everything else in MP-1 depends on — the MongoDB schema (with GeoJSON/2dsphere geospatial support), the Rover fleet registry, Geofence CRUD, and the polled command-queue API.
 
-**Architecture:** A FastAPI service, running in Docker Compose on a home-network host, backed by MongoDB Atlas (hosted, managed separately). Business logic lives in a `services/` layer that talks to `pymongo` directly (testable without an HTTP client); thin FastAPI routers translate service-layer exceptions into HTTP responses. No mocking of MongoDB — every test runs against a real Mongo instance (Atlas dev cluster or a disposable local container), because this plan's core correctness properties (the one-active-rover uniqueness constraint, 2dsphere geo queries) are exactly the things an in-memory mock gets wrong.
+**Architecture:** A FastAPI service, running in Docker Compose on a home-network host, backed by MongoDB Atlas (hosted, managed separately, manually configured by the user). Business logic lives in a `services/` layer that talks to `pymongo` directly (testable without an HTTP client); thin FastAPI routers translate service-layer exceptions into HTTP responses. No mocking of MongoDB and no alternate/local database — every test runs against the same Atlas cluster given in `.env`, because this plan's core correctness properties (the one-active-rover uniqueness constraint, 2dsphere geo queries) are exactly the things an in-memory mock gets wrong.
 
-**Tech Stack:** Python 3.12, FastAPI, pymongo (sync), Pydantic v2, pytest, Docker Compose, MongoDB Atlas (hosted; a local MongoDB 7 container is used only for local dev/test, never for the target deployment).
+**Tech Stack:** Python 3.12, FastAPI, pymongo (sync), Pydantic v2, pytest, Docker Compose, MongoDB Atlas (hosted).
 
 ## Global Constraints
 
 - New code lives under a new root folder `pathfinder-autonomous/`, physically separate from the existing upstream-derived `pathfinder/` tree (user decision — keeps a future upstream PR or private fork clean). This plan's code lives at `pathfinder-autonomous/backend/`.
 - All position/polygon fields use GeoJSON. **Coordinate order is `[longitude, latitude]`** — reversed from casual lat/long usage. (Design spec: Data Model.)
-- MongoDB is hosted on **MongoDB Atlas** (managed, hosted — not a self-hosted container), configured manually by the user starting on the Free Tier. Connection details (URI with embedded username/password) come from a `.env` file — never hardcoded in `docker-compose.yml` or committed to git. `.env.example` ships with placeholders for the user to fill in. Local dev/test may point at a disposable local Mongo container or a personal Atlas dev cluster — the application code is identical either way, since it's just a connection string. (User correction, 2026-09-24.)
+- MongoDB is hosted on **MongoDB Atlas** (managed, hosted — not a self-hosted container), manually configured by the user starting on the Free Tier. This plan's code never creates, chooses, or substitutes a database instance — it only ever connects to the one `MONGO_URI` the user supplies in `.env`. Connection details (URI with embedded username/password) come from that `.env` file — never hardcoded in `docker-compose.yml` or committed to git. `.env.example` ships with placeholders for the user to fill in. (User correction, 2026-09-24.)
 - The command channel is a **polled queue**, not a push connection — the rover polls for its own commands; the backend never initiates a connection to the rover. (Design spec: Command Channel.)
 - Only one Rover may have `status="active"` at any time; starting a mission (`start_sweep`) on a rover while another is active must be rejected. (Design spec: Rover Identity & Fleet.)
 - This plan defines exactly three collections: `rovers`, `geofences`, `commands`. Obstacle and telemetry collections belong to later plans (Pi mission core / Pi telemetry + sync) and are out of scope here.
@@ -154,19 +154,19 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Edit `.env` with either (a) your MongoDB Atlas Free Tier connection string, or (b) `MONGO_URI=mongodb://localhost:27017` if you'd rather run a disposable local Mongo for now (see Step 3) — the code doesn't care which, since both are read from the same `MONGO_URI` value. Using your production Atlas cluster for routine test runs isn't recommended: the test suite creates and drops a `papaya_pathfinder_test` database on whatever cluster `MONGO_URI` points to, on every run.
+The Atlas cluster itself is **not** something this task creates — it's configured manually by the user (their own Atlas account, their own Free Tier cluster, their own database user), outside this repo entirely. This task's only job is to read whatever `MONGO_URI` ends up in `.env` and connect to it.
 
-- [ ] **Step 3: Get a MongoDB instance running for local dev/test**
+- [ ] **Step 3: Confirm `.env` has a working `MONGO_URI` and verify connectivity**
 
-Either:
-- **Atlas Free Tier** — create a cluster in the Atlas UI, create a database user, and use its connection string in `.env` (this is the manually-configured Atlas cluster the user is setting up separately).
-- **Local disposable Mongo** — for fast local iteration without touching Atlas at all:
-  ```bash
-  docker run --rm -d -p 27017:27017 --name papaya-dev-mongo mongo:7
-  ```
-  and set `MONGO_URI=mongodb://localhost:27017` in `.env`.
+`.env`'s `MONGO_URI` is supplied by the user and points at their already-configured MongoDB Atlas cluster. Do not create a cluster, do not substitute a local or alternate database, and do not choose between multiple options — there is exactly one Mongo instance this project talks to, and it's whatever `.env` says. If `.env` doesn't yet contain a real `MONGO_URI` (still has the `<username>:<password>@<cluster-host>` placeholder from `.env.example`), stop here and wait for the user to supply it before continuing — every later task's tests depend on this connection working.
 
-Expected either way: you have a `MONGO_URI` in `.env` that a MongoDB client can connect to. Verify with: `python3 -c "from pymongo import MongoClient; import os; from dotenv import load_dotenv; load_dotenv(); MongoClient(os.environ['MONGO_URI']).admin.command('ping')"` — expect no exception.
+Once `.env` has a real value, verify connectivity:
+
+```bash
+python3 -c "from pymongo import MongoClient; import os; from dotenv import load_dotenv; load_dotenv(); MongoClient(os.environ['MONGO_URI']).admin.command('ping')"
+```
+
+Expected: no exception (a successful ping means the URI, credentials, and network access are all correct).
 
 - [ ] **Step 4: Write the minimal `app/db.py`**
 
@@ -1137,7 +1137,7 @@ def test_point_inside_inclusive_zone_is_ignored(db):
 - [ ] **Step 8: Run the geospatial tests and verify they pass**
 
 Run: `pytest tests/test_geofence_geospatial.py -v`
-Expected: PASS (3 passed). If this fails with an error mentioning `2dsphere` or `$geoIntersects`, verify `ensure_indexes` actually ran against this test's `db` fixture (it does, in `conftest.py`) and that whatever `MONGO_URI` points to (Atlas, or the local `papaya-dev-mongo` container from Task 1 Step 3) is a real MongoDB 7+ — geospatial query support requires a real index, which `ensure_indexes` just created.
+Expected: PASS (3 passed). If this fails with an error mentioning `2dsphere` or `$geoIntersects`, verify `ensure_indexes` actually ran against this test's `db` fixture (it does, in `conftest.py`) and that the Atlas cluster `MONGO_URI` points to (Task 1 Step 3) is reachable — geospatial query support requires a real index, which `ensure_indexes` just created.
 
 - [ ] **Step 9: Write the Geofence router and register it**
 
@@ -1720,7 +1720,9 @@ the design this implements.
     cp .env.example .env
 
 Fill in `.env` with your MongoDB Atlas connection string (Atlas UI:
-Database > Connect > Drivers). `.env` is gitignored — never commit real
+Database > Connect > Drivers) — this is the one cluster the app and its
+tests talk to; nothing in this codebase creates or substitutes a
+different database. `.env` is gitignored — never commit real
 credentials.
 
 ## Run it
@@ -1731,23 +1733,15 @@ Backend on http://localhost:8000, health check at `/health`.
 
 ## Run the tests
 
-Tests need *some* MongoDB instance to run against — either your Atlas
-dev cluster (via `.env`'s `MONGO_URI`), or a disposable local container
-so you're not burning Atlas Free Tier usage on every test run:
-
-    docker run --rm -d -p 27017:27017 --name papaya-dev-mongo mongo:7
-
-Then, with `MONGO_URI=mongodb://localhost:27017` in `.env` (or pointed
-at Atlas):
+Requires `.env`'s `MONGO_URI` to already be set to a reachable Atlas
+cluster:
 
     python3 -m venv .venv && source .venv/bin/activate
     pip install -r requirements.txt
     pytest -v
 
-Tests use a separate `papaya_pathfinder_test` database and drop it after
-each run — do this against a dev cluster or the local container, not
-your production Atlas cluster, since every test run creates and drops
-that database on whatever instance `MONGO_URI` points to.
+Tests use a separate `papaya_pathfinder_test` database on that same
+cluster and drop it after each run.
 
 ## API surface
 
