@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - Extends `pathfinder-autonomous/pi-mission/` — same package as the three prior Pi-mission plans.
-- **Commit cadence** (2026-09-24 decision): `save_obstacle`/`save_sweep_session` commit immediately — these are rare, high-value events (a detection, a state transition) where losing one to a sudden power loss is costly, and the write volume is far too low to threaten microSD write endurance. `save_telemetry_record` deliberately does **not** auto-commit — telemetry is high-frequency (spec: ~1s while driving, ~5s while idle), and committing every sample would wear the card faster for no real benefit. The caller batches commits via an explicit `local_store.commit(conn)` call on roughly a one-minute cadence, which also bounds worst-case data loss/rework on a sudden restart to about that same window. Mark-synced operations (all three entities) commit immediately too — they're infrequent and checkpoint-triggered, not the high-frequency case this tradeoff is about.
+- **Commit cadence** (2026-09-24 decision): `save_obstacle`/`save_sweep_session` commit immediately — these are rare, high-value events (a detection, a state transition) where losing one to a sudden power loss is costly, and the write volume is far too low to threaten microSD write endurance. `save_telemetry_record` deliberately does **not** auto-commit — telemetry is high-frequency (spec: ~1s while driving, ~5s while idle), and committing every sample would wear the card faster for no real benefit. The interval itself is a named, importable constant (`local_store.DEFAULT_TELEMETRY_COMMIT_INTERVAL_S`, currently `60.0`) rather than a number buried in prose or hardcoded somewhere downstream — easy to change in one place if the tradeoff ever needs revisiting. The caller (mission runtime) tracks `last_commit_at` and asks `local_store.should_commit_telemetry(last_commit_at, now)` on each tick, calling `commit()` when it returns `True`. Mark-synced operations (all three entities) commit immediately too — they're infrequent and checkpoint-triggered, not the high-frequency case this tradeoff is about.
 - **Local upsert semantics**: obstacle/sweep-session saves upsert by `id` and reset `synced_at` to `NULL` on update — a locally-modified record (e.g. resume-validation bumping `last_confirmed_at`, or a sweep session transitioning status) must get re-synced, not silently stay marked as already-synced from before the change. Telemetry saves are insert-only (`ON CONFLICT DO NOTHING`) — matches the backend's append-only telemetry semantics from the Backend Obstacle & Telemetry Sync plan.
 - **Missing-value tagging**: `expected_metrics` is both floor and ceiling for `build_telemetry_record`'s output — every key in it appears (present or `"missing"`), and anything in the raw readings *outside* that set is silently dropped, not passed through. Matches the design spec: "nothing is written for metrics outside the current sensor configuration."
 - The sensor manifest itself (which metrics are "expected" for this rover+mission) is **not fetched from the backend by this plan** — `expected_metrics` is a parameter the caller supplies, having cached it locally for offline operation (same pattern as the already-established local geofence cache). Fetching and caching that manifest is a Mission Runtime concern.
@@ -45,7 +45,7 @@ pathfinder-autonomous/
 - Test: `pathfinder-autonomous/pi-mission/tests/test_local_store.py`
 
 **Interfaces:**
-- Produces: `papaya_mission.local_store.connect(db_path: str) -> sqlite3.Connection` (creates the schema if absent; pass `":memory:"` for tests). Per-entity functions: `save_obstacle(conn, obstacle: dict) -> None`, `list_unsynced_obstacles(conn) -> list[dict]`, `mark_obstacles_synced(conn, ids: list[str], synced_at: datetime) -> None`; the same three-function shape for `*_sweep_session(s)` and `*_telemetry`/`*_telemetry_record`. Plus `commit(conn) -> None`. Records use plain `dict`s with the same field names/shapes as the backend's wire format (e.g. `obstacle["position"]` is a `(lon, lat)` tuple, matching `papaya_mission.obstacle.Obstacle` from the Obstacle Detection & Classification plan) — no new dataclass hierarchy, to avoid a fourth parallel representation of the same shape (Pi pure-domain object, backend Pydantic model, wire JSON, local-store dict).
+- Produces: `papaya_mission.local_store.connect(db_path: str) -> sqlite3.Connection` (creates the schema if absent; pass `":memory:"` for tests). Per-entity functions: `save_obstacle(conn, obstacle: dict) -> None`, `list_unsynced_obstacles(conn) -> list[dict]`, `mark_obstacles_synced(conn, ids: list[str], synced_at: datetime) -> None`; the same three-function shape for `*_sweep_session(s)` and `*_telemetry`/`*_telemetry_record`. Plus `commit(conn) -> None`, `DEFAULT_TELEMETRY_COMMIT_INTERVAL_S: float` (a named, importable constant — currently `60.0`), and `should_commit_telemetry(last_commit_at: datetime | None, now: datetime, interval_s: float = DEFAULT_TELEMETRY_COMMIT_INTERVAL_S) -> bool`. The mission-runtime plan tracks `last_commit_at` itself and calls `should_commit_telemetry` on each tick to decide whether to call `commit()` — the interval lives in exactly one place, easy to change without hunting through a scheduling loop for a hardcoded number. Records use plain `dict`s with the same field names/shapes as the backend's wire format (e.g. `obstacle["position"]` is a `(lon, lat)` tuple, matching `papaya_mission.obstacle.Obstacle` from the Obstacle Detection & Classification plan) — no new dataclass hierarchy, to avoid a fourth parallel representation of the same shape (Pi pure-domain object, backend Pydantic model, wire JSON, local-store dict).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -53,7 +53,7 @@ pathfinder-autonomous/
 # pathfinder-autonomous/pi-mission/tests/test_local_store.py
 import os
 import tempfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -227,6 +227,40 @@ def test_telemetry_writes_are_not_durable_until_explicit_commit():
                 reader_conn.close()
         finally:
             writer_conn.close()
+
+
+# --- Commit-interval helper (configurable, not hardcoded) ------------------
+
+def test_should_commit_telemetry_true_when_nothing_committed_yet():
+    assert local_store.should_commit_telemetry(last_commit_at=None, now=DETECTED_AT) is True
+
+
+def test_should_commit_telemetry_false_before_interval_elapses():
+    result = local_store.should_commit_telemetry(
+        last_commit_at=DETECTED_AT, now=DETECTED_AT, interval_s=60.0
+    )
+
+    assert result is False
+
+
+def test_should_commit_telemetry_true_once_interval_elapses():
+    now = DETECTED_AT + timedelta(seconds=61)
+
+    result = local_store.should_commit_telemetry(
+        last_commit_at=DETECTED_AT, now=now, interval_s=60.0
+    )
+
+    assert result is True
+
+
+def test_should_commit_telemetry_uses_the_configurable_default_interval():
+    just_before_default = DETECTED_AT + timedelta(
+        seconds=local_store.DEFAULT_TELEMETRY_COMMIT_INTERVAL_S - 1
+    )
+
+    result = local_store.should_commit_telemetry(DETECTED_AT, just_before_default)
+
+    assert result is False
 ```
 
 - [ ] **Step 2: Run the tests and verify they fail**
@@ -305,6 +339,29 @@ def connect(db_path: str) -> sqlite3.Connection:
 
 def commit(conn: sqlite3.Connection) -> None:
     conn.commit()
+
+
+DEFAULT_TELEMETRY_COMMIT_INTERVAL_S = 60.0
+
+
+def should_commit_telemetry(
+    last_commit_at: datetime | None,
+    now: datetime,
+    interval_s: float = DEFAULT_TELEMETRY_COMMIT_INTERVAL_S,
+) -> bool:
+    """Whether enough time has passed since the last telemetry commit to
+    flush again. `last_commit_at=None` (nothing committed yet this
+    session) always returns True. The interval is a plain parameter
+    backed by a named constant, not a number buried in a scheduling
+    loop somewhere -- change DEFAULT_TELEMETRY_COMMIT_INTERVAL_S (or
+    pass a different `interval_s`) if the SD-card-wear tradeoff ever
+    needs revisiting. This function only answers "should I" -- the
+    caller (mission runtime) tracks `last_commit_at` and calls
+    `commit()` itself when this returns True.
+    """
+    if last_commit_at is None:
+        return True
+    return (now - last_commit_at).total_seconds() >= interval_s
 
 
 def _iso(value: datetime | None) -> str | None:
@@ -500,13 +557,13 @@ def _row_to_telemetry(row: sqlite3.Row) -> dict[str, Any]:
 - [ ] **Step 4: Run the tests and verify they pass**
 
 Run: `pytest tests/test_local_store.py -v`
-Expected: PASS (10 passed)
+Expected: PASS (14 passed)
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add pathfinder-autonomous/pi-mission/papaya_mission/local_store.py pathfinder-autonomous/pi-mission/tests/test_local_store.py
-git commit -m "feat(pi-mission): add SQLite local store with deferred telemetry commits"
+git commit -m "feat(pi-mission): add SQLite local store with a configurable telemetry commit interval"
 ```
 
 ---
@@ -1027,9 +1084,11 @@ Add to the "Modules" list:
 ```markdown
 - `local_store.py` — SQLite local store for obstacles/sweep-sessions/
   telemetry. Obstacle/session saves commit immediately; telemetry saves
-  defer commit to the caller (`commit()`), batched roughly every minute
-  per the SD-card-wear tradeoff (see the design spec's resolved open
-  items).
+  defer commit to the caller (`commit()`), batched per
+  `DEFAULT_TELEMETRY_COMMIT_INTERVAL_S` (currently 60s — change this one
+  constant, or pass a different `interval_s` to `should_commit_telemetry`,
+  if the SD-card-wear tradeoff ever needs revisiting; see the design
+  spec's resolved open items).
 - `telemetry_record.py` — `build_telemetry_record()`: the two-tier
   telemetry record's missing-value tagging (present / `"missing"` /
   omitted).
@@ -1050,6 +1109,6 @@ git commit -m "test(pi-mission): add Pi sync integration test, update README"
 
 ## Self-Review Notes
 
-- **Spec coverage:** Local SQLite store as the working copy during a mission (Data Model — Local vs. Mongo storage) ✓ Task 1. Upsert-with-synced-at-reset for mutable records, insert-only for telemetry — mirrors the backend's sync semantics exactly (Backend Obstacle & Telemetry Sync plan) ✓ Task 1. Two-tier telemetry's missing-value/expected-metrics semantics (Telemetry — Expected metrics & missing-value semantics) ✓ Task 2. Sync at a Home-return checkpoint, sweep sessions/obstacles before telemetry (Mission Flow — Completion & sync) ✓ Task 3. The 2026-09-24 SQLite commit-cadence decision is implemented, not just documented — verified by Task 1's durability test using two real SQLite connections to the same file. The live summary telemetry tier (continuous low-rate stream over LoRa/WiFi), the sensor-manifest fetch/cache mechanism itself, and the actual Home-return-triggering logic are explicitly out of scope — Mission Runtime plan.
+- **Spec coverage:** Local SQLite store as the working copy during a mission (Data Model — Local vs. Mongo storage) ✓ Task 1. Upsert-with-synced-at-reset for mutable records, insert-only for telemetry — mirrors the backend's sync semantics exactly (Backend Obstacle & Telemetry Sync plan) ✓ Task 1. Two-tier telemetry's missing-value/expected-metrics semantics (Telemetry — Expected metrics & missing-value semantics) ✓ Task 2. Sync at a Home-return checkpoint, sweep sessions/obstacles before telemetry (Mission Flow — Completion & sync) ✓ Task 3. The 2026-09-24 SQLite commit-cadence decision is implemented, not just documented — verified by Task 1's durability test using two real SQLite connections to the same file, and the interval itself is a named constant (`DEFAULT_TELEMETRY_COMMIT_INTERVAL_S`) plus a tested decision function (`should_commit_telemetry`), not a number left for some future scheduling loop to hardcode. The live summary telemetry tier (continuous low-rate stream over LoRa/WiFi), the sensor-manifest fetch/cache mechanism itself, and the actual Home-return-triggering logic are explicitly out of scope — Mission Runtime plan.
 - **Placeholder scan:** no TBD/TODO; every step has runnable code.
 - **Type consistency:** `local_store`'s dict shapes match what `telemetry_record.build_telemetry_record` produces (Task 2's output is fed directly into Task 1's `save_telemetry_record` in Task 4's integration test) and what `sync_client`'s `_*_to_wire` functions consume — no field-name mismatches across the three modules.

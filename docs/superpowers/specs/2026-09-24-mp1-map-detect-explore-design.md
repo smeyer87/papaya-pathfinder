@@ -507,12 +507,15 @@ the planning/implementation phase:
   transport is low. No per-record hashing/checksumming layer is being
   added preemptively; revisit only if corruption actually shows up in
   practice. (User decision, 2026-09-24.)
-- Local SQLite commit cadence on the Pi: batching writes on the order of
-  "up to about a minute" is fine — gentle on the microSD card's write
-  endurance, and it bounds worst-case rework on resume to about that
-  same interval. Immediate per-sample commits aren't necessary. (User
-  decision, 2026-09-24 — to be applied in the Pi Local Store & Sync
-  Client plan.)
+- ~~Local SQLite commit cadence on the Pi~~ — resolved: batching writes
+  on the order of "up to about a minute" is fine — gentle on the
+  microSD card's write endurance, and it bounds worst-case rework on
+  resume to about that same interval. Immediate per-sample commits
+  aren't necessary. Implemented as a named, easily-changed constant
+  (`local_store.DEFAULT_TELEMETRY_COMMIT_INTERVAL_S`) plus a tested
+  decision function, not a number hardcoded into a scheduling loop —
+  see the [Pi Local Store & Sync Client plan](../plans/2026-09-24-mp1-pi-local-store-sync-client.md).
+  (User decision, 2026-09-24.)
 - Bump-sensor and GPS-dropout debug/test hooks: how they're exposed and
   who can trigger them (test harness only, or also a field debug
   command)
