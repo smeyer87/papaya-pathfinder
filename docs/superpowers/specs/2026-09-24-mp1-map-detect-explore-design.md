@@ -493,7 +493,19 @@ the planning/implementation phase:
   budget when this gets decided.
 - Exact mast reuse decision: confirm 4tronix mast height/load specs
   against MP-1's sensor payload before committing
-- Sync reconciliation mechanism: record-count vs. checksum
+- ~~Sync reconciliation mechanism: record-count vs. checksum~~ — resolved:
+  neither. Sweep sessions, obstacles, and telemetry all use
+  client-generated IDs (UUIDs assigned by the Pi at creation time,
+  before connectivity is guaranteed), making sync naturally idempotent —
+  obstacles/sessions upsert by ID, telemetry inserts with duplicate-key
+  errors on retry treated as already-synced. See the [Backend Obstacle &
+  Telemetry Sync plan](../plans/2026-09-24-mp1-backend-obstacle-telemetry-sync.md).
+- Local SQLite commit cadence on the Pi: batching writes on the order of
+  "up to about a minute" is fine — gentle on the microSD card's write
+  endurance, and it bounds worst-case rework on resume to about that
+  same interval. Immediate per-sample commits aren't necessary. (User
+  decision, 2026-09-24 — to be applied in the Pi Local Store & Sync
+  Client plan.)
 - Bump-sensor and GPS-dropout debug/test hooks: how they're exposed and
   who can trigger them (test harness only, or also a field debug
   command)
