@@ -459,7 +459,7 @@ git commit -m "feat(backend): add GeoJSON Point/Polygon models with validation"
 
 **Interfaces:**
 - Consumes: `app.db.get_database` (Task 1), pytest `db`/`client` fixtures (Task 1).
-- Produces: `app.models.rover.{Rover, RoverCreate, RoverUpdate, SensorManifestEntry}`. Service functions in `app.services.rovers`: `create_rover(db, data: RoverCreate) -> Rover`, `get_rover(db, rover_id: str) -> Rover`, `list_rovers(db) -> list[Rover]`, `update_rover(db, rover_id, data: RoverUpdate) -> Rover`, `activate_rover(db, rover_id) -> Rover`, `deactivate_rover(db, rover_id) -> Rover`. Exceptions: `RoverNotFound`, `AnotherRoverActive(active_rover_id: str)`. Router mounted at `/rovers`. Task 4's `commands.py` service calls `activate_rover`/`deactivate_rover`/`get_rover` directly.
+- Produces: `app.models.rover.{Rover, RoverCreate, RoverUpdate, SensorManifestEntry}`. `Rover` carries physical-dimension fields (`length_m`, `width_m`, `turn_style`, `min_turn_diameter_m`) alongside identity/status/manifest fields — this is the single source of truth the mission-runtime plan fetches once at mission start and passes explicitly into the pure decision-logic functions (`exclusion_decision.decide_exclusion_response(intrusion_depth_m, rover_length_m)`, `row_spacing.derive_row_spacing_m(..., turn_style, min_turn_diameter_m)` — both in the Mission Flow Decision Logic plan). No global variables or module-level config: those functions take dimensions as explicit parameters, and the Rover record is where the runtime reads them from. Service functions in `app.services.rovers`: `create_rover(db, data: RoverCreate) -> Rover`, `get_rover(db, rover_id: str) -> Rover`, `list_rovers(db) -> list[Rover]`, `update_rover(db, rover_id, data: RoverUpdate) -> Rover`, `activate_rover(db, rover_id) -> Rover`, `deactivate_rover(db, rover_id) -> Rover`. Exceptions: `RoverNotFound`, `AnotherRoverActive(active_rover_id: str)`. Router mounted at `/rovers`. Task 4's `commands.py` service calls `activate_rover`/`deactivate_rover`/`get_rover` directly.
 
 - [ ] **Step 1: Write the failing service-layer tests**
 
@@ -578,6 +578,10 @@ class SensorManifestEntry(BaseModel):
 class Rover(BaseModel):
     id: str = Field(alias="_id")
     name: str
+    length_m: float | None = None
+    width_m: float | None = None
+    turn_style: Literal["spin_in_place", "graceful"] = "spin_in_place"
+    min_turn_diameter_m: float | None = None  # only meaningful when turn_style="graceful"
     sensor_manifest: list[SensorManifestEntry] = Field(default_factory=list)
     supported_mission_packages: list[str] = Field(default_factory=list)
     status: Literal["active", "inactive"] = "inactive"
@@ -590,6 +594,10 @@ class Rover(BaseModel):
 
 class RoverCreate(BaseModel):
     name: str
+    length_m: float | None = None
+    width_m: float | None = None
+    turn_style: Literal["spin_in_place", "graceful"] = "spin_in_place"
+    min_turn_diameter_m: float | None = None
     sensor_manifest: list[SensorManifestEntry] = Field(default_factory=list)
     supported_mission_packages: list[str] = Field(default_factory=list)
     notes: str = ""
@@ -597,10 +605,21 @@ class RoverCreate(BaseModel):
 
 class RoverUpdate(BaseModel):
     name: str | None = None
+    length_m: float | None = None
+    width_m: float | None = None
+    turn_style: Literal["spin_in_place", "graceful"] | None = None
+    min_turn_diameter_m: float | None = None
     sensor_manifest: list[SensorManifestEntry] | None = None
     supported_mission_packages: list[str] | None = None
     notes: str | None = None
 ```
+
+`length_m`/`width_m` are optional at the model level (existing tests
+that construct a bare `RoverCreate(name=...)` stay valid) but are a real
+safety dependency in practice — the mission-runtime plan should refuse
+to start a mission on a rover whose dimensions aren't set, since
+`exclusion_decision.decide_exclusion_response` (Mission Flow Decision
+Logic plan) needs `rover_length_m` to work at all.
 
 - [ ] **Step 4: Write the Rover service**
 
