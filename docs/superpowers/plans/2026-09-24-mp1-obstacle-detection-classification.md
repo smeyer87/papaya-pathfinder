@@ -2,16 +2,18 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Turn raw sensor detections (ultrasonic bearing/range + camera classification, or a bump contact) into `Obstacle` records with an absolute position, a permanent/temporary classification, and the resume-validation logic that reconciles previously known obstacles against freshly re-detected ones.
+**Goal:** Turn raw sensor detections (ultrasonic relative-bearing/range + camera classification, or a bump contact) into `Obstacle` records with a correctly computed absolute position, a permanent/temporary classification, and the resume-validation logic that reconciles previously known obstacles against freshly re-detected ones.
 
-**Architecture:** Extends the `papaya_mission` package from the Position & Coverage Geometry plan. Starts with a small refactor — extracting the shared degrees/meters math both plans need into `geo_utils.py` — then adds the obstacle domain model and three pure-logic modules (classification, detection-to-obstacle conversion, resume-validation reconciliation). Camera classification results and bump-contact events are plain input data here, same as GPS/IMU readings in the prior plan — no real hardware or ML model integration in this plan.
+**Architecture:** Extends the `papaya_mission` package from the Position & Coverage Geometry plan. Starts with a small refactor — extracting the shared degrees/meters math both plans need into `geo_utils.py`, and adding heading-tracking to `PositionEstimate` (a real gap in the prior plan: obstacle placement needs the rover's own compass heading, not just its lat/lon) — then adds the obstacle domain model and three pure-logic modules (classification, detection-to-obstacle conversion, resume-validation reconciliation). Camera classification results and bump-contact events are plain input data here, same as GPS/IMU readings in the prior plan — no real hardware or ML model integration in this plan.
 
 **Tech Stack:** Python 3.11, Shapely 2.x (already a dependency), pytest. No new dependencies.
 
 ## Global Constraints
 
 - Extends `pathfinder-autonomous/pi-mission/` from the prior plan — same package, same stack.
-- Task 1 refactors already-committed code (`position_fusion.py`, `coverage_pattern.py`, `exclusion_check.py`). The full existing test suite must pass with zero changes to test assertions before any new work proceeds — this is a safety-net regression check, not a behavior change.
+- Task 1 refactors already-committed code (`position_fusion.py`, `coverage_pattern.py`, `exclusion_check.py`, and their tests). The full existing test suite must pass before any new work proceeds — a regression safety net for the mechanical parts of the refactor. Task 1 also *adds* real new behavior (heading tracking, input validation) with its own TDD cycle, not folded silently into "refactor."
+- **Time handling:** `GpsFix`/`ImuReading`/`PositionEstimate.timestamp` are monotonic seconds (e.g. `time.monotonic()`), used only for computing reliable elapsed-time deltas in the dead-reckoning math — never wall-clock time, which can jump on an NTP sync. `Obstacle.first_detected_at`/`last_confirmed_at` and the `detected_at`/`now` parameters throughout this plan are real `datetime` objects (UTC) — record-keeping timestamps meant to be logged, compared, and eventually synced.
+- **Bearing convention:** ultrasonic/camera detections report a bearing *relative to the rover's own heading* (0 = straight ahead) — the mast rotates independently of the chassis. Converting that to an absolute compass bearing for position projection requires combining it with the rover's current heading (`rover_position.heading_deg + relative_bearing_deg`, mod 360). Getting this wrong silently places obstacles at the wrong location whenever the rover isn't facing due north — a real bug the code in this plan fixes.
 - Low-confidence classifications (`confidence < 0.5`) never get promoted to `permanent-pending`, regardless of type match. (Design spec: Testing — "Malformed/low-confidence classification.")
 - Bump-contact detections always get `status="permanent-pending"` — there's no type classification to lean on, so it's routed to human review rather than silently logged as temporary. This is deliberately different from a low-confidence *camera* reading, which is more likely sensor noise and stays temporary. (Design spec: Mission Flow — Bump contact.)
 - Obstacle position uncertainty is inherited from the rover's current error-circle radius (from the position-fusion plan); sensor-specific range/bearing noise isn't modeled separately for v1.
@@ -26,7 +28,7 @@ pathfinder-autonomous/
   pi-mission/
     papaya_mission/
       geo_utils.py            # NEW -- shared degrees/meters helpers
-      position_fusion.py       # MODIFIED -- uses geo_utils
+      position_fusion.py       # MODIFIED -- geo_utils, heading tracking, input validation
       coverage_pattern.py       # MODIFIED -- uses geo_utils's constant
       exclusion_check.py         # MODIFIED -- uses geo_utils's constant
       obstacle.py                 # NEW -- Obstacle dataclass
@@ -35,28 +37,30 @@ pathfinder-autonomous/
       resume_validation.py           # NEW -- reconcile_obstacles()
     tests/
       test_geo_utils.py         # NEW
-      test_obstacle.py           # NEW
-      test_classification.py      # NEW
-      test_obstacle_detection.py   # NEW
-      test_resume_validation.py     # NEW
-      test_obstacle_integration.py   # NEW
+      test_position_fusion.py    # MODIFIED -- new heading/validation tests added
+      test_obstacle.py            # NEW
+      test_classification.py       # NEW
+      test_obstacle_detection.py    # NEW
+      test_resume_validation.py      # NEW
+      test_obstacle_integration.py    # NEW
 ```
 
 ---
 
-### Task 1: Extract shared geometry helpers, refactor existing modules onto them
+### Task 1: Shared geometry helpers, heading tracking, and input validation
 
 **Files:**
 - Create: `pathfinder-autonomous/pi-mission/papaya_mission/geo_utils.py`
 - Test: `pathfinder-autonomous/pi-mission/tests/test_geo_utils.py`
 - Modify: `pathfinder-autonomous/pi-mission/papaya_mission/position_fusion.py`
+- Modify: `pathfinder-autonomous/pi-mission/tests/test_position_fusion.py`
 - Modify: `pathfinder-autonomous/pi-mission/papaya_mission/coverage_pattern.py`
 - Modify: `pathfinder-autonomous/pi-mission/papaya_mission/exclusion_check.py`
 
 **Interfaces:**
-- Produces: `papaya_mission.geo_utils.{METERS_PER_DEGREE_LAT, project_position(lat, lon, bearing_deg, distance_m) -> (lat, lon), flat_earth_distance_m(a, b) -> float}` where `a`/`b` are `(lon, lat)` tuples. `project_position` replaces the inline projection math `position_fusion.py` had; `flat_earth_distance_m` is new, used by Task 5's reconciliation. `position_fusion.PositionFusion`'s public behavior (from the prior plan) is unchanged — this is a pure refactor.
+- Produces: `papaya_mission.geo_utils.{METERS_PER_DEGREE_LAT, project_position(lat, lon, bearing_deg, distance_m) -> (lat, lon), flat_earth_distance_m(a, b) -> float}` where `a`/`b` are `(lon, lat)` tuples. `PositionEstimate` gains a `heading_deg: float` field (the rover's current compass heading — needed by Task 4 to convert a mast-relative bearing into an absolute one). `PositionFusion.__init__` gains an `initial_heading_deg: float = 0.0` keyword parameter; heading updates on every `on_imu_reading` call and is untouched by `on_gps_fix`. `GpsFix`/`ImuReading` now validate their inputs in `__post_init__`, raising `ValueError` on bad data instead of silently accepting it.
 
-- [ ] **Step 1: Write the failing tests for the new helpers**
+- [ ] **Step 1: Write the failing tests for the new geo_utils helpers**
 
 ```python
 # pathfinder-autonomous/pi-mission/tests/test_geo_utils.py
@@ -121,7 +125,10 @@ def project_position(
     lat: float, lon: float, bearing_deg: float, distance_m: float
 ) -> tuple[float, float]:
     """Project a (lat, lon) point `distance_m` meters along `bearing_deg`
-    (0 = north, clockwise positive). Returns (new_lat, new_lon).
+    (0 = north, clockwise positive). Returns (new_lat, new_lon). This is
+    an ABSOLUTE compass bearing -- callers with a mast-relative bearing
+    must combine it with the rover's own heading first (see
+    obstacle_detection.py).
     """
     bearing_rad = math.radians(bearing_deg)
     new_lat = lat + (distance_m * math.cos(bearing_rad)) / METERS_PER_DEGREE_LAT
@@ -146,7 +153,130 @@ def flat_earth_distance_m(a: tuple[float, float], b: tuple[float, float]) -> flo
 Run: `pytest tests/test_geo_utils.py -v`
 Expected: PASS (5 passed)
 
-- [ ] **Step 5: Refactor `position_fusion.py` to use `geo_utils.project_position`**
+- [ ] **Step 5: Write failing tests for heading tracking and input validation, appended to `test_position_fusion.py`**
+
+These test behavior `position_fusion.py` doesn't have yet — heading wasn't tracked at all, and `GpsFix`/`ImuReading` accepted any input silently.
+
+```python
+# pathfinder-autonomous/pi-mission/tests/test_position_fusion.py
+import math
+
+import pytest
+
+from papaya_mission.position_fusion import GpsFix, ImuReading, PositionFusion
+
+
+def test_seeding_with_gps_fix_sets_initial_estimate():
+    fix = GpsFix(lat=38.0, lon=-85.0, accuracy_m=2.0, timestamp=0.0)
+
+    fusion = PositionFusion(fix)
+
+    estimate = fusion.current_estimate
+    assert estimate.lat == 38.0
+    assert estimate.lon == -85.0
+    assert estimate.error_radius_m == 2.0
+
+
+def test_imu_reading_moves_position_and_grows_error_radius():
+    fix = GpsFix(lat=38.0, lon=-85.0, accuracy_m=2.0, timestamp=0.0)
+    fusion = PositionFusion(fix, drift_rate_m_per_s=0.5)
+
+    estimate = fusion.on_imu_reading(
+        ImuReading(heading_deg=0.0, forward_acceleration_mps2=1.0, timestamp=1.0)
+    )
+
+    assert estimate.lat > 38.0
+    assert math.isclose(estimate.lon, -85.0, abs_tol=1e-9)
+    assert estimate.error_radius_m > 2.0
+
+
+def test_error_radius_grows_monotonically_across_multiple_imu_readings():
+    fix = GpsFix(lat=38.0, lon=-85.0, accuracy_m=2.0, timestamp=0.0)
+    fusion = PositionFusion(fix, drift_rate_m_per_s=0.5)
+
+    r1 = fusion.on_imu_reading(
+        ImuReading(heading_deg=90.0, forward_acceleration_mps2=0.5, timestamp=1.0)
+    ).error_radius_m
+    r2 = fusion.on_imu_reading(
+        ImuReading(heading_deg=90.0, forward_acceleration_mps2=0.5, timestamp=2.0)
+    ).error_radius_m
+
+    assert r2 > r1
+
+
+def test_new_gps_fix_resets_error_radius_and_position():
+    fix = GpsFix(lat=38.0, lon=-85.0, accuracy_m=2.0, timestamp=0.0)
+    fusion = PositionFusion(fix, drift_rate_m_per_s=0.5)
+    fusion.on_imu_reading(
+        ImuReading(heading_deg=90.0, forward_acceleration_mps2=2.0, timestamp=5.0)
+    )
+
+    corrected = fusion.on_gps_fix(
+        GpsFix(lat=38.001, lon=-85.001, accuracy_m=1.5, timestamp=6.0)
+    )
+
+    assert corrected.lat == 38.001
+    assert corrected.lon == -85.001
+    assert corrected.error_radius_m == 1.5
+
+
+def test_zero_or_negative_dt_is_ignored():
+    fix = GpsFix(lat=38.0, lon=-85.0, accuracy_m=2.0, timestamp=5.0)
+    fusion = PositionFusion(fix)
+
+    estimate = fusion.on_imu_reading(
+        ImuReading(heading_deg=0.0, forward_acceleration_mps2=5.0, timestamp=5.0)
+    )
+
+    assert estimate.lat == 38.0
+    assert estimate.lon == -85.0
+
+
+def test_heading_deg_updates_with_imu_readings():
+    fix = GpsFix(lat=38.0, lon=-85.0, accuracy_m=2.0, timestamp=0.0)
+    fusion = PositionFusion(fix, initial_heading_deg=45.0)
+
+    assert fusion.current_estimate.heading_deg == 45.0
+
+    estimate = fusion.on_imu_reading(
+        ImuReading(heading_deg=270.0, forward_acceleration_mps2=0.0, timestamp=1.0)
+    )
+
+    assert estimate.heading_deg == 270.0
+
+
+def test_gps_fix_does_not_change_heading():
+    fix = GpsFix(lat=38.0, lon=-85.0, accuracy_m=2.0, timestamp=0.0)
+    fusion = PositionFusion(fix, initial_heading_deg=45.0)
+    fusion.on_imu_reading(
+        ImuReading(heading_deg=90.0, forward_acceleration_mps2=0.0, timestamp=1.0)
+    )
+
+    corrected = fusion.on_gps_fix(
+        GpsFix(lat=38.001, lon=-85.001, accuracy_m=1.5, timestamp=2.0)
+    )
+
+    assert corrected.heading_deg == 90.0  # unchanged by the GPS fix
+
+
+def test_imu_reading_rejects_heading_out_of_range():
+    with pytest.raises(ValueError):
+        ImuReading(heading_deg=360.0, forward_acceleration_mps2=0.0, timestamp=0.0)
+    with pytest.raises(ValueError):
+        ImuReading(heading_deg=-1.0, forward_acceleration_mps2=0.0, timestamp=0.0)
+
+
+def test_gps_fix_rejects_negative_accuracy():
+    with pytest.raises(ValueError):
+        GpsFix(lat=38.0, lon=-85.0, accuracy_m=-1.0, timestamp=0.0)
+```
+
+- [ ] **Step 6: Run `test_position_fusion.py` and verify the new tests fail, old ones still pass**
+
+Run: `pytest tests/test_position_fusion.py -v`
+Expected: the 5 original tests PASS unchanged; `test_heading_deg_updates_with_imu_readings`, `test_gps_fix_does_not_change_heading`, `test_imu_reading_rejects_heading_out_of_range`, and `test_gps_fix_rejects_negative_accuracy` FAIL (`AttributeError: 'PositionEstimate' object has no attribute 'heading_deg'` / no exception raised for bad input).
+
+- [ ] **Step 7: Rewrite `position_fusion.py`** — geo_utils refactor, heading tracking, and validation together, since all three touch the same file
 
 ```python
 # pathfinder-autonomous/pi-mission/papaya_mission/position_fusion.py
@@ -158,6 +288,13 @@ inertial fusion), flat-earth degrees<->meters approximation (fine at the
 scale of a single geofenced field). No wheel encoders -- velocity comes
 from integrating accelerometer readings, which drifts, which is exactly
 why the error circle exists and why it resets at every GPS fix.
+
+`timestamp` fields are monotonic seconds (e.g. time.monotonic() on the
+real Pi), not wall-clock time -- this module only needs reliable
+elapsed-time deltas between readings, and wall-clock time can jump on an
+NTP sync, which would corrupt the dead-reckoning math. Wall-clock
+timestamps for records (e.g. Obstacle.first_detected_at) are a separate
+concern, tracked by the caller.
 """
 from __future__ import annotations
 
@@ -171,28 +308,43 @@ class GpsFix:
     lat: float
     lon: float
     accuracy_m: float
-    timestamp: float
+    timestamp: float  # monotonic seconds
+
+    def __post_init__(self) -> None:
+        if self.accuracy_m < 0:
+            raise ValueError(f"accuracy_m must be >= 0, got {self.accuracy_m}")
 
 
 @dataclass
 class ImuReading:
-    heading_deg: float
+    heading_deg: float  # compass heading, 0 = north, clockwise positive
     forward_acceleration_mps2: float
-    timestamp: float
+    timestamp: float  # monotonic seconds
+
+    def __post_init__(self) -> None:
+        if not (0.0 <= self.heading_deg < 360.0):
+            raise ValueError(f"heading_deg must be in [0, 360), got {self.heading_deg}")
 
 
 @dataclass
 class PositionEstimate:
     lat: float
     lon: float
+    heading_deg: float
     error_radius_m: float
     timestamp: float
 
 
 class PositionFusion:
-    def __init__(self, initial_fix: GpsFix, drift_rate_m_per_s: float = 0.5):
+    def __init__(
+        self,
+        initial_fix: GpsFix,
+        initial_heading_deg: float = 0.0,
+        drift_rate_m_per_s: float = 0.5,
+    ):
         self._lat = initial_fix.lat
         self._lon = initial_fix.lon
+        self._heading_deg = initial_heading_deg
         self._error_radius_m = initial_fix.accuracy_m
         self._velocity_mps = 0.0
         self._last_timestamp = initial_fix.timestamp
@@ -203,6 +355,7 @@ class PositionFusion:
         return PositionEstimate(
             lat=self._lat,
             lon=self._lon,
+            heading_deg=self._heading_deg,
             error_radius_m=self._error_radius_m,
             timestamp=self._last_timestamp,
         )
@@ -226,6 +379,7 @@ class PositionFusion:
         self._lat, self._lon = project_position(
             self._lat, self._lon, reading.heading_deg, distance_m
         )
+        self._heading_deg = reading.heading_deg
 
         self._error_radius_m += self._drift_rate_m_per_s * dt
         self._last_timestamp = reading.timestamp
@@ -233,7 +387,12 @@ class PositionFusion:
         return self.current_estimate
 ```
 
-- [ ] **Step 6: Refactor `coverage_pattern.py` to use `geo_utils`'s constant**
+- [ ] **Step 8: Run `test_position_fusion.py` and verify all 9 tests pass**
+
+Run: `pytest tests/test_position_fusion.py -v`
+Expected: PASS (9 passed)
+
+- [ ] **Step 9: Refactor `coverage_pattern.py` to use `geo_utils`'s constant**
 
 ```python
 # pathfinder-autonomous/pi-mission/papaya_mission/coverage_pattern.py
@@ -303,7 +462,7 @@ def _as_line_segments(geometry) -> list[list[tuple[float, float]]]:
     )
 ```
 
-- [ ] **Step 7: Refactor `exclusion_check.py` to use `geo_utils`'s constant**
+- [ ] **Step 10: Refactor `exclusion_check.py` to use `geo_utils`'s constant**
 
 ```python
 # pathfinder-autonomous/pi-mission/papaya_mission/exclusion_check.py
@@ -347,16 +506,16 @@ def find_intruded_exclusion(
     return None
 ```
 
-- [ ] **Step 8: Run the full existing test suite and verify zero regressions**
+- [ ] **Step 11: Run the full test suite and verify zero regressions**
 
 Run: `pytest -v`
-Expected: PASS — every test from the prior plan (`test_position_fusion.py`, `test_coverage_pattern.py`, `test_exclusion_check.py`, `test_integration.py`) still passes unchanged, plus the 5 new `test_geo_utils.py` tests. If anything in the prior suite fails, the refactor introduced a behavior change — stop and diagnose before continuing; do not edit the prior tests to make them pass.
+Expected: PASS — `test_geo_utils.py` (5), `test_position_fusion.py` (9), `test_coverage_pattern.py` (4), `test_exclusion_check.py` (5), `test_integration.py` (2) all pass. If anything outside `test_position_fusion.py` fails, the `geo_utils` extraction changed behavior — stop and diagnose before continuing.
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 12: Commit**
 
 ```bash
 git add pathfinder-autonomous/pi-mission
-git commit -m "refactor(pi-mission): extract shared geo_utils from position/coverage/exclusion modules"
+git commit -m "refactor(pi-mission): extract geo_utils, add heading tracking and input validation"
 ```
 
 ---
@@ -368,17 +527,20 @@ git commit -m "refactor(pi-mission): extract shared geo_utils from position/cove
 - Test: `pathfinder-autonomous/pi-mission/tests/test_obstacle.py`
 
 **Interfaces:**
-- Produces: `papaya_mission.obstacle.Obstacle` — frozen dataclass with `position: tuple[float, float]` (lon, lat), `position_uncertainty_m: float`, `type: str`, `classification_confidence: float`, `detection_method: Literal["ultrasonic+camera", "contact-only"]`, `status: Literal["temporary", "permanent-pending"]`, `first_detected_at: float`, `last_confirmed_at: float | None = None`. Used by Tasks 4 and 5, and by the later Pi-telemetry-and-sync plan when persisting to the local store. Deliberately excludes lifecycle fields (`id`, `review_status`, `reviewed_by`, `reviewed_at`, `synced_at`) owned by that later plan.
+- Produces: `papaya_mission.obstacle.Obstacle` — frozen dataclass with `position: tuple[float, float]` (lon, lat), `position_uncertainty_m: float`, `type: str`, `classification_confidence: float`, `detection_method: Literal["ultrasonic+camera", "contact-only"]`, `status: Literal["temporary", "permanent-pending"]`, `first_detected_at: datetime`, `last_confirmed_at: datetime | None = None`. Used by Tasks 4 and 5, and by the later Pi-telemetry-and-sync plan when persisting to the local store. Deliberately excludes lifecycle fields (`id`, `review_status`, `reviewed_by`, `reviewed_at`, `synced_at`) owned by that later plan.
 
 - [ ] **Step 1: Write the failing tests**
 
 ```python
 # pathfinder-autonomous/pi-mission/tests/test_obstacle.py
 import dataclasses
+from datetime import datetime, timezone
 
 import pytest
 
 from papaya_mission.obstacle import Obstacle
+
+DETECTED_AT = datetime(2026, 9, 24, 12, 0, 0, tzinfo=timezone.utc)
 
 
 def test_obstacle_is_constructible():
@@ -389,7 +551,7 @@ def test_obstacle_is_constructible():
         classification_confidence=0.9,
         detection_method="ultrasonic+camera",
         status="permanent-pending",
-        first_detected_at=10.0,
+        first_detected_at=DETECTED_AT,
     )
 
     assert obstacle.type == "barrel"
@@ -404,7 +566,7 @@ def test_obstacle_is_immutable():
         classification_confidence=0.9,
         detection_method="ultrasonic+camera",
         status="permanent-pending",
-        first_detected_at=10.0,
+        first_detected_at=DETECTED_AT,
     )
 
     with pytest.raises(dataclasses.FrozenInstanceError):
@@ -425,10 +587,16 @@ Obstacle record needs (design spec: Data Model -- Obstacle record) that
 this plan's logic actually determines. Persistence-lifecycle fields (id,
 review_status, reviewed_by, reviewed_at, synced_at) are owned by the
 Pi-telemetry-and-sync plan and the backend review workflow, not here.
+
+Timestamp fields are real (wall-clock, UTC) datetimes -- unlike
+position_fusion.py's monotonic-seconds timestamps, these are
+record-keeping values meant to be logged, compared, and eventually
+synced.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Literal
 
 DetectionMethod = Literal["ultrasonic+camera", "contact-only"]
@@ -443,8 +611,8 @@ class Obstacle:
     classification_confidence: float
     detection_method: DetectionMethod
     status: ObstacleStatus
-    first_detected_at: float
-    last_confirmed_at: float | None = None
+    first_detected_at: datetime
+    last_confirmed_at: datetime | None = None
 ```
 
 - [ ] **Step 4: Run the tests and verify they pass**
@@ -469,12 +637,14 @@ git commit -m "feat(pi-mission): add Obstacle domain model"
 
 **Interfaces:**
 - Consumes: nothing from earlier tasks in this plan.
-- Produces: `papaya_mission.classification.{LOW_CONFIDENCE_THRESHOLD, classify_permanence(classified_type: str, confidence: float) -> Literal["temporary", "permanent-pending"]}`. Used by Task 4's `obstacle_from_ultrasonic_camera_detection`.
+- Produces: `papaya_mission.classification.{LOW_CONFIDENCE_THRESHOLD, classify_permanence(classified_type: str, confidence: float) -> Literal["temporary", "permanent-pending"]}`, raising `ValueError` if `confidence` is outside `[0, 1]`. Used by Task 4's `obstacle_from_ultrasonic_camera_detection`.
 
 - [ ] **Step 1: Write the failing tests**
 
 ```python
 # pathfinder-autonomous/pi-mission/tests/test_classification.py
+import pytest
+
 from papaya_mission.classification import LOW_CONFIDENCE_THRESHOLD, classify_permanence
 
 
@@ -496,6 +666,13 @@ def test_unrecognized_type_defaults_to_temporary():
 
 def test_confidence_exactly_at_threshold_is_not_low_confidence():
     assert classify_permanence("fence_post", confidence=LOW_CONFIDENCE_THRESHOLD) == "permanent-pending"
+
+
+def test_confidence_out_of_range_raises():
+    with pytest.raises(ValueError):
+        classify_permanence("barrel", confidence=1.5)
+    with pytest.raises(ValueError):
+        classify_permanence("barrel", confidence=-0.1)
 ```
 
 - [ ] **Step 2: Run the tests and verify they fail**
@@ -531,6 +708,8 @@ def classify_permanence(
     set (recognized temporary types and unrecognized/novel ones alike)
     defaults to temporary.
     """
+    if not (0.0 <= confidence <= 1.0):
+        raise ValueError(f"confidence must be in [0, 1], got {confidence}")
     if confidence < LOW_CONFIDENCE_THRESHOLD:
         return "temporary"
     if classified_type in _PERMANENT_TYPES:
@@ -541,7 +720,7 @@ def classify_permanence(
 - [ ] **Step 4: Run the tests and verify they pass**
 
 Run: `pytest tests/test_classification.py -v`
-Expected: PASS (5 passed)
+Expected: PASS (6 passed)
 
 - [ ] **Step 5: Commit**
 
@@ -559,60 +738,104 @@ git commit -m "feat(pi-mission): add permanent/temporary classification heuristi
 - Test: `pathfinder-autonomous/pi-mission/tests/test_obstacle_detection.py`
 
 **Interfaces:**
-- Consumes: `papaya_mission.geo_utils.project_position` (Task 1), `papaya_mission.classification.classify_permanence` (Task 3), `papaya_mission.obstacle.Obstacle` (Task 2), `papaya_mission.position_fusion.PositionEstimate` (prior plan).
-- Produces: `papaya_mission.obstacle_detection.{obstacle_from_ultrasonic_camera_detection(rover_position, bearing_deg, range_m, classified_type, classification_confidence, detected_at) -> Obstacle, obstacle_from_bump_contact(rover_position, detected_at) -> Obstacle}`. The mission-flow state machine plan calls these whenever a sensor reports a detection.
+- Consumes: `papaya_mission.geo_utils.project_position` (Task 1), `papaya_mission.classification.classify_permanence` (Task 3), `papaya_mission.obstacle.Obstacle` (Task 2), `papaya_mission.position_fusion.PositionEstimate` (Task 1 — now including `heading_deg`).
+- Produces: `papaya_mission.obstacle_detection.{obstacle_from_ultrasonic_camera_detection(rover_position, relative_bearing_deg, range_m, classified_type, classification_confidence, detected_at: datetime) -> Obstacle, obstacle_from_bump_contact(rover_position, detected_at: datetime) -> Obstacle}`. Note the parameter is `relative_bearing_deg`, not `bearing_deg` — it's the mast's angle relative to the rover's own heading, combined internally with `rover_position.heading_deg` before projecting. The mission-flow state machine plan calls these whenever a sensor reports a detection.
 
 - [ ] **Step 1: Write the failing tests**
 
 ```python
 # pathfinder-autonomous/pi-mission/tests/test_obstacle_detection.py
+import math
+from datetime import datetime, timezone
+
 from papaya_mission.obstacle_detection import (
     obstacle_from_bump_contact,
     obstacle_from_ultrasonic_camera_detection,
 )
 from papaya_mission.position_fusion import PositionEstimate
 
-ROVER_POSITION = PositionEstimate(lat=38.0, lon=-85.0, error_radius_m=1.5, timestamp=10.0)
+DETECTED_AT = datetime(2026, 9, 24, 12, 0, 0, tzinfo=timezone.utc)
+
+# Rover facing east (heading 90) -- deliberately non-north so these tests
+# actually exercise the relative-bearing + heading combination instead of
+# accidentally passing with heading silently treated as zero.
+ROVER_POSITION = PositionEstimate(
+    lat=38.0, lon=-85.0, heading_deg=90.0, error_radius_m=1.5, timestamp=10.0
+)
 
 
-def test_ultrasonic_camera_detection_projects_position_from_bearing_range():
+def test_relative_bearing_zero_combines_with_rover_heading():
+    # Straight ahead (relative bearing 0) while facing east should place
+    # the obstacle east of the rover, not north.
     obstacle = obstacle_from_ultrasonic_camera_detection(
         rover_position=ROVER_POSITION,
-        bearing_deg=0.0,  # north
+        relative_bearing_deg=0.0,
         range_m=10.0,
         classified_type="barrel",
         classification_confidence=0.9,
-        detected_at=11.0,
+        detected_at=DETECTED_AT,
     )
 
     obstacle_lon, obstacle_lat = obstacle.position
-    assert obstacle_lat > ROVER_POSITION.lat  # north of the rover
+    assert obstacle_lon > ROVER_POSITION.lon
+    assert math.isclose(obstacle_lat, ROVER_POSITION.lat, abs_tol=1e-6)
+
+
+def test_relative_bearing_offsets_from_rover_heading():
+    # Mast turned 270 degrees relative to the chassis while facing east
+    # (heading 90) works out to absolute bearing 0 (north): 90+270=360=0.
+    obstacle = obstacle_from_ultrasonic_camera_detection(
+        rover_position=ROVER_POSITION,
+        relative_bearing_deg=270.0,
+        range_m=10.0,
+        classified_type="barrel",
+        classification_confidence=0.9,
+        detected_at=DETECTED_AT,
+    )
+
+    obstacle_lon, obstacle_lat = obstacle.position
+    assert obstacle_lat > ROVER_POSITION.lat
+    assert math.isclose(obstacle_lon, ROVER_POSITION.lon, abs_tol=1e-6)
+
+
+def test_obstacle_type_status_and_uncertainty_still_set_correctly():
+    obstacle = obstacle_from_ultrasonic_camera_detection(
+        rover_position=ROVER_POSITION,
+        relative_bearing_deg=0.0,
+        range_m=10.0,
+        classified_type="barrel",
+        classification_confidence=0.9,
+        detected_at=DETECTED_AT,
+    )
+
     assert obstacle.type == "barrel"
     assert obstacle.status == "permanent-pending"
     assert obstacle.detection_method == "ultrasonic+camera"
     assert obstacle.position_uncertainty_m == ROVER_POSITION.error_radius_m
+    assert obstacle.first_detected_at == DETECTED_AT
 
 
 def test_ultrasonic_camera_detection_low_confidence_stays_temporary():
     obstacle = obstacle_from_ultrasonic_camera_detection(
         rover_position=ROVER_POSITION,
-        bearing_deg=0.0,
+        relative_bearing_deg=0.0,
         range_m=10.0,
         classified_type="barrel",
         classification_confidence=0.1,
-        detected_at=11.0,
+        detected_at=DETECTED_AT,
     )
 
     assert obstacle.status == "temporary"
 
 
 def test_bump_contact_is_always_permanent_pending_and_unknown_type():
-    obstacle = obstacle_from_bump_contact(rover_position=ROVER_POSITION, detected_at=12.0)
+    obstacle = obstacle_from_bump_contact(rover_position=ROVER_POSITION, detected_at=DETECTED_AT)
 
     assert obstacle.type == "unknown"
     assert obstacle.status == "permanent-pending"
     assert obstacle.detection_method == "contact-only"
     assert obstacle.position == (ROVER_POSITION.lon, ROVER_POSITION.lat)
+    assert obstacle.first_detected_at == DETECTED_AT
 ```
 
 - [ ] **Step 2: Run the tests and verify they fail**
@@ -630,6 +853,8 @@ position estimate for absolute placement. See design spec: Mission Flow
 """
 from __future__ import annotations
 
+from datetime import datetime
+
 from papaya_mission.classification import classify_permanence
 from papaya_mission.geo_utils import project_position
 from papaya_mission.obstacle import Obstacle
@@ -638,19 +863,23 @@ from papaya_mission.position_fusion import PositionEstimate
 
 def obstacle_from_ultrasonic_camera_detection(
     rover_position: PositionEstimate,
-    bearing_deg: float,
+    relative_bearing_deg: float,
     range_m: float,
     classified_type: str,
     classification_confidence: float,
-    detected_at: float,
+    detected_at: datetime,
 ) -> Obstacle:
-    """A proactively detected obstacle: ultrasonic gives bearing/range,
-    the AI camera gives type + confidence. Position uncertainty is
-    inherited from the rover's own current error-circle radius --
-    sensor-specific range/bearing noise isn't modeled separately for v1.
+    """`relative_bearing_deg` is the ultrasonic/camera mast's angle
+    relative to the rover's own heading (0 = straight ahead) -- the mast
+    rotates independently of the chassis, so the detected object may not
+    be dead ahead. Combined with the rover's current compass heading
+    (from the fused position estimate) to get the absolute bearing the
+    obstacle actually sits at before projecting outward by `range_m`.
     """
+    absolute_bearing_deg = (rover_position.heading_deg + relative_bearing_deg) % 360.0
+
     obstacle_lat, obstacle_lon = project_position(
-        rover_position.lat, rover_position.lon, bearing_deg, range_m
+        rover_position.lat, rover_position.lon, absolute_bearing_deg, range_m
     )
     status = classify_permanence(classified_type, classification_confidence)
 
@@ -667,14 +896,16 @@ def obstacle_from_ultrasonic_camera_detection(
 
 def obstacle_from_bump_contact(
     rover_position: PositionEstimate,
-    detected_at: float,
+    detected_at: datetime,
 ) -> Obstacle:
     """A reactive detection: something was hit that proactive sensors
-    missed. No type classification is possible, so it's always flagged
-    for human review (permanent-pending) rather than silently logged as
-    temporary -- a bump contact is real, actionable information about a
-    sensing gap, unlike a low-confidence camera reading that's more
-    likely just noise.
+    missed. The contact point is the rover's own current position -- no
+    bearing/range to project, unlike a proactive ultrasonic+camera
+    detection. No type classification is possible, so it's always
+    flagged for human review (permanent-pending) rather than silently
+    logged as temporary -- a bump contact is real, actionable
+    information about a sensing gap, unlike a low-confidence camera
+    reading that's more likely just noise.
     """
     return Obstacle(
         position=(rover_position.lon, rover_position.lat),
@@ -690,7 +921,7 @@ def obstacle_from_bump_contact(
 - [ ] **Step 4: Run the tests and verify they pass**
 
 Run: `pytest tests/test_obstacle_detection.py -v`
-Expected: PASS (3 passed)
+Expected: PASS (5 passed)
 
 - [ ] **Step 5: Commit**
 
@@ -709,14 +940,19 @@ git commit -m "feat(pi-mission): convert sensor detections into Obstacle records
 
 **Interfaces:**
 - Consumes: `papaya_mission.geo_utils.flat_earth_distance_m` (Task 1), `papaya_mission.obstacle.Obstacle` (Task 2).
-- Produces: `papaya_mission.resume_validation.{ReconciliationResult, reconcile_obstacles(known_obstacles: list[Obstacle], freshly_detected: list[Obstacle], now: float, match_radius_m: float = 3.0) -> ReconciliationResult}`. `ReconciliationResult` has `.confirmed` (known obstacles matched to a fresh detection, `last_confirmed_at` updated), `.cleared` (temporary, no match — caller removes these), `.discrepancies` (permanent-pending, no match — caller flags, never removes). The mission-flow state machine plan calls this during a resume pass (design spec: Mission Flow — Resume validation).
+- Produces: `papaya_mission.resume_validation.{ReconciliationResult, reconcile_obstacles(known_obstacles: list[Obstacle], freshly_detected: list[Obstacle], now: datetime, match_radius_m: float = 3.0) -> ReconciliationResult}`. `ReconciliationResult` has `.confirmed` (known obstacles matched to a fresh detection, `last_confirmed_at` updated to `now`), `.cleared` (temporary, no match — caller removes these), `.discrepancies` (permanent-pending, no match — caller flags, never removes). The mission-flow state machine plan calls this during a resume pass (design spec: Mission Flow — Resume validation).
 
 - [ ] **Step 1: Write the failing tests**
 
 ```python
 # pathfinder-autonomous/pi-mission/tests/test_resume_validation.py
+from datetime import datetime, timedelta, timezone
+
 from papaya_mission.obstacle import Obstacle
 from papaya_mission.resume_validation import reconcile_obstacles
+
+FIRST_DETECTED = datetime(2026, 9, 24, 12, 0, 0, tzinfo=timezone.utc)
+NOW = FIRST_DETECTED + timedelta(minutes=30)
 
 
 def _obstacle(lon, lat, status, obstacle_type="barrel"):
@@ -727,7 +963,7 @@ def _obstacle(lon, lat, status, obstacle_type="barrel"):
         classification_confidence=0.9,
         detection_method="ultrasonic+camera",
         status=status,
-        first_detected_at=0.0,
+        first_detected_at=FIRST_DETECTED,
     )
 
 
@@ -735,10 +971,10 @@ def test_matched_obstacle_is_confirmed_with_updated_timestamp():
     known = _obstacle(-85.0, 38.0, "temporary")
     fresh = _obstacle(-85.0, 38.0, "temporary")
 
-    result = reconcile_obstacles([known], [fresh], now=100.0)
+    result = reconcile_obstacles([known], [fresh], now=NOW)
 
     assert len(result.confirmed) == 1
-    assert result.confirmed[0].last_confirmed_at == 100.0
+    assert result.confirmed[0].last_confirmed_at == NOW
     assert result.confirmed[0].position == known.position
     assert result.cleared == []
     assert result.discrepancies == []
@@ -747,7 +983,7 @@ def test_matched_obstacle_is_confirmed_with_updated_timestamp():
 def test_missing_temporary_obstacle_is_cleared_not_flagged():
     known = _obstacle(-85.0, 38.0, "temporary")
 
-    result = reconcile_obstacles([known], freshly_detected=[], now=100.0)
+    result = reconcile_obstacles([known], freshly_detected=[], now=NOW)
 
     assert result.cleared == [known]
     assert result.discrepancies == []
@@ -757,7 +993,7 @@ def test_missing_temporary_obstacle_is_cleared_not_flagged():
 def test_missing_permanent_pending_obstacle_is_flagged_not_removed():
     known = _obstacle(-85.0, 38.0, "permanent-pending")
 
-    result = reconcile_obstacles([known], freshly_detected=[], now=100.0)
+    result = reconcile_obstacles([known], freshly_detected=[], now=NOW)
 
     assert result.discrepancies == [known]
     assert result.cleared == []
@@ -768,7 +1004,7 @@ def test_far_away_detection_does_not_count_as_a_match():
     known = _obstacle(-85.0, 38.0, "temporary")
     far_away = _obstacle(-84.0, 37.0, "temporary")  # well beyond match_radius_m
 
-    result = reconcile_obstacles([known], [far_away], now=100.0, match_radius_m=3.0)
+    result = reconcile_obstacles([known], [far_away], now=NOW, match_radius_m=3.0)
 
     assert result.cleared == [known]
     assert result.confirmed == []
@@ -791,6 +1027,7 @@ from __future__ import annotations
 
 import dataclasses
 from dataclasses import dataclass
+from datetime import datetime
 
 from papaya_mission.geo_utils import flat_earth_distance_m
 from papaya_mission.obstacle import Obstacle
@@ -806,7 +1043,7 @@ class ReconciliationResult:
 def reconcile_obstacles(
     known_obstacles: list[Obstacle],
     freshly_detected: list[Obstacle],
-    now: float,
+    now: datetime,
     match_radius_m: float = 3.0,
 ) -> ReconciliationResult:
     confirmed: list[Obstacle] = []
@@ -862,6 +1099,8 @@ git commit -m "feat(pi-mission): add resume-validation obstacle reconciliation"
 
 ```python
 # pathfinder-autonomous/pi-mission/tests/test_obstacle_integration.py
+from datetime import datetime, timedelta, timezone
+
 from papaya_mission.obstacle_detection import (
     obstacle_from_bump_contact,
     obstacle_from_ultrasonic_camera_detection,
@@ -869,25 +1108,30 @@ from papaya_mission.obstacle_detection import (
 from papaya_mission.position_fusion import PositionEstimate
 from papaya_mission.resume_validation import reconcile_obstacles
 
+FIRST_PASS = datetime(2026, 9, 24, 12, 0, 0, tzinfo=timezone.utc)
+RESUME_PASS = FIRST_PASS + timedelta(hours=1)
+
 
 def test_sweep_then_resume_pass_reconciles_correctly():
-    rover_position = PositionEstimate(lat=38.0, lon=-85.0, error_radius_m=1.5, timestamp=0.0)
+    rover_position = PositionEstimate(
+        lat=38.0, lon=-85.0, heading_deg=0.0, error_radius_m=1.5, timestamp=0.0
+    )
 
     barrel = obstacle_from_ultrasonic_camera_detection(
         rover_position,
-        bearing_deg=0.0,
+        relative_bearing_deg=0.0,
         range_m=5.0,
         classified_type="barrel",
         classification_confidence=0.9,
-        detected_at=1.0,
+        detected_at=FIRST_PASS,
     )
     chair = obstacle_from_ultrasonic_camera_detection(
         rover_position,
-        bearing_deg=180.0,
+        relative_bearing_deg=180.0,
         range_m=5.0,
         classified_type="chair",
         classification_confidence=0.9,
-        detected_at=2.0,
+        detected_at=FIRST_PASS + timedelta(seconds=1),
     )
     known_obstacles = [barrel, chair]
     assert barrel.status == "permanent-pending"
@@ -898,15 +1142,17 @@ def test_sweep_then_resume_pass_reconciles_correctly():
     # sensors missed entirely.
     fresh_barrel = obstacle_from_ultrasonic_camera_detection(
         rover_position,
-        bearing_deg=0.0,
+        relative_bearing_deg=0.0,
         range_m=5.0,
         classified_type="barrel",
         classification_confidence=0.9,
-        detected_at=100.0,
+        detected_at=RESUME_PASS,
     )
-    bump_discovery = obstacle_from_bump_contact(rover_position, detected_at=101.0)
+    bump_discovery = obstacle_from_bump_contact(
+        rover_position, detected_at=RESUME_PASS + timedelta(seconds=1)
+    )
 
-    result = reconcile_obstacles(known_obstacles, [fresh_barrel], now=100.0)
+    result = reconcile_obstacles(known_obstacles, [fresh_barrel], now=RESUME_PASS)
 
     assert len(result.confirmed) == 1
     assert result.confirmed[0].type == "barrel"
@@ -926,9 +1172,9 @@ Expected: PASS
 # Papaya Pathfinder — Pi Mission (Position & Coverage Geometry)
 
 Pure geometry/algorithm layer for MP-1: GPS+IMU dead-reckoning position
-fusion with a growing error-circle, boustrophedon coverage-pattern
-generation, exclusion-zone intrusion checks, and obstacle
-detection/classification/resume-reconciliation. See
+fusion (with heading tracking and a growing error-circle), boustrophedon
+coverage-pattern generation, exclusion-zone intrusion checks, and
+obstacle detection/classification/resume-reconciliation. See
 `docs/superpowers/specs/2026-09-24-mp1-map-detect-explore-design.md` for
 the design this implements.
 
@@ -937,6 +1183,18 @@ results/bump events are all plain data a later sensor-driver layer will
 produce from real hardware; this package only does the math and
 decision logic. No persistence or orchestration either -- that's the
 mission-flow state machine plan that imports these modules.
+
+**Time handling:** `position_fusion.py`'s `timestamp` fields are
+monotonic seconds (e.g. `time.monotonic()`), used only for computing
+elapsed-time deltas -- never wall-clock time. Everything else
+(`Obstacle.first_detected_at`, `detected_at`, `now`) is a real UTC
+`datetime`.
+
+**Bearing convention:** ultrasonic/camera detections report a bearing
+relative to the rover's own heading (0 = straight ahead), not an
+absolute compass bearing -- the mast rotates independently of the
+chassis. `obstacle_detection.py` combines it with the rover's current
+heading before placing the obstacle.
 
 ## Run the tests
 
@@ -950,7 +1208,7 @@ mission-flow state machine plan that imports these modules.
   `flat_earth_distance_m`) used by every other module.
 - `position_fusion.py` — `PositionFusion`: seed with a `GpsFix`, feed
   `ImuReading`s between fixes, read `.current_estimate` for the fused
-  position + error-circle radius.
+  position + heading + error-circle radius.
 - `coverage_pattern.py` — `generate_coverage_pattern(inclusive,
   exclusions, row_spacing_m)`: ordered `(lon, lat)` lawnmower waypoints.
 - `exclusion_check.py` — `find_intruded_exclusion(position,
@@ -959,8 +1217,9 @@ mission-flow state machine plan that imports these modules.
 - `obstacle.py` — `Obstacle`: the detection domain object.
 - `classification.py` — `classify_permanence(type, confidence)`: the
   permanent/temporary heuristic, with a low-confidence safety override.
-- `obstacle_detection.py` — turns a sensor detection (ultrasonic+camera,
-  or a bump contact) into an `Obstacle` at an absolute position.
+- `obstacle_detection.py` — turns a sensor detection (ultrasonic+camera
+  relative-bearing/range, or a bump contact) into an `Obstacle` at an
+  absolute position.
 - `resume_validation.py` — `reconcile_obstacles(known, fresh, now)`:
   confirms, clears, or flags-as-discrepancy previously known obstacles
   during a resume pass.
@@ -977,6 +1236,6 @@ git commit -m "test(pi-mission): add obstacle pipeline integration test, update 
 
 ## Self-Review Notes
 
-- **Spec coverage:** Detection (position + type + permanent/temporary tagging) ✓ Task 4. Bump contact (immediate, always flagged for review) ✓ Task 4. Low-confidence classification never promoted ✓ Task 3. Resume validation (confirm/clear/flag-discrepancy, never silently remove permanent-candidates) ✓ Task 5. The shared geometry refactor (Task 1) keeps the prior plan's modules DRY without changing their observable behavior — verified by running its full existing test suite unchanged. Real camera/ML model integration, real bump-sensor I2C bus reading, persistence, sync, and sweep-session orchestration are explicitly out of scope — later plans.
+- **Spec coverage:** Detection (position + type + permanent/temporary tagging, now with correct absolute-bearing computation from relative bearing + rover heading) ✓ Task 4. Bump contact (immediate, always flagged for review) ✓ Task 4. Low-confidence classification never promoted ✓ Task 3. Resume validation (confirm/clear/flag-discrepancy, never silently remove permanent-candidates) ✓ Task 5. The shared geometry refactor plus heading tracking and input validation (Task 1) close gaps found in review of the prior plan. Real camera/ML model integration, real bump-sensor I2C bus reading, persistence, sync, and sweep-session orchestration are explicitly out of scope — later plans.
 - **Placeholder scan:** no TBD/TODO; every step has runnable code.
-- **Type consistency:** `Obstacle.position` is `(lon, lat)` everywhere it's produced (Task 4) and consumed (Task 5's `flat_earth_distance_m`), matching the GeoJSON coordinate-order convention from the backend plan. `PositionEstimate` fields (`lat`, `lon`, `error_radius_m`) are read the same way in Task 4 as they're defined in the prior plan — no renamed/mismatched fields.
+- **Type consistency:** `Obstacle.position` is `(lon, lat)` everywhere it's produced (Task 4) and consumed (Task 5's `flat_earth_distance_m`), matching the GeoJSON coordinate-order convention from the backend plan. `PositionEstimate` now carries `heading_deg`, read consistently in Task 4. `datetime` is used consistently for all record-keeping timestamps (`Obstacle.first_detected_at`/`last_confirmed_at`, `detected_at`, `now`); `float` is used consistently and exclusively for monotonic-clock fields internal to `position_fusion.py`. No module mixes the two.
