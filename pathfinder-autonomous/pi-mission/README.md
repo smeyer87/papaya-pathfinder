@@ -23,6 +23,8 @@ mission-flow state machine plan that imports these modules.
   `ImuReading`s between fixes, read `.current_estimate` for the fused
   position + error-circle radius.
 - `coverage_pattern.py` — `generate_coverage_pattern(inclusive, exclusions,
-  row_spacing_m)`: ordered `(lon, lat)` lawnmower waypoints.
+  row_spacing_m)`: ordered lawnmower *legs* — a list of contiguous
+  `(lon, lat)` polylines. Each leg is independently drivable; routing
+  between legs is the caller's job (an exclusion zone may sit in the gap).
 - `exclusion_check.py` — `find_intruded_exclusion(position, exclusions)`:
   which exclusion zone (if any) a position is inside, and how deep.

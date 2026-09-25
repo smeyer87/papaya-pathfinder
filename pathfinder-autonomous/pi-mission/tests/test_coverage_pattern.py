@@ -1,5 +1,5 @@
 import pytest
-from shapely.geometry import Polygon
+from shapely.geometry import LineString, Polygon
 
 from papaya_mission.coverage_pattern import generate_coverage_pattern
 
@@ -15,8 +15,10 @@ FIELD = Polygon(
 
 
 def test_generates_multiple_rows_covering_the_field():
-    waypoints = generate_coverage_pattern(FIELD, exclusions=[], row_spacing_m=20.0)
+    legs = generate_coverage_pattern(FIELD, exclusions=[], row_spacing_m=20.0)
 
+    assert len(legs) >= 2  # at least 2 rows, each an independently-drivable leg
+    waypoints = [point for leg in legs for point in leg]
     assert len(waypoints) >= 4  # at least 2 rows x 2 endpoints each
     lats = [lat for _, lat in waypoints]
     assert min(lats) >= 38.000
@@ -24,13 +26,11 @@ def test_generates_multiple_rows_covering_the_field():
 
 
 def test_rows_alternate_direction_boustrophedon():
-    waypoints = generate_coverage_pattern(FIELD, exclusions=[], row_spacing_m=20.0)
+    legs = generate_coverage_pattern(FIELD, exclusions=[], row_spacing_m=20.0)
 
-    first_row = waypoints[0:2]
-    assert first_row[0][0] < first_row[1][0]  # row 0: west to east
-
-    second_row = waypoints[2:4]
-    assert second_row[0][0] > second_row[1][0]  # row 1: east to west
+    # No exclusions, so each row is exactly one leg.
+    assert legs[0][0][0] < legs[0][-1][0]  # row 0: west to east
+    assert legs[1][0][0] > legs[1][-1][0]  # row 1: east to west
 
 
 def test_exclusion_zone_removes_covered_area():
@@ -44,10 +44,18 @@ def test_exclusion_zone_removes_covered_area():
         ]
     )
 
-    waypoints = generate_coverage_pattern(FIELD, exclusions=[exclusion], row_spacing_m=20.0)
+    legs = generate_coverage_pattern(FIELD, exclusions=[exclusion], row_spacing_m=20.0)
 
-    for lon, lat in waypoints:
-        assert not (-85.0007 < lon < -85.0003 and 38.0003 < lat < 38.0007)
+    for leg in legs:
+        for lon, lat in leg:
+            assert not (-85.0007 < lon < -85.0003 and 38.0003 < lat < 38.0007)
+
+    # The real invariant: driving straight between consecutive points *within*
+    # a leg never crosses the exclusion. (Crossings between legs are expected --
+    # that's what the leg boundary is for.)
+    for leg in legs:
+        for a, b in zip(leg, leg[1:]):
+            assert LineString([a, b]).intersection(exclusion).length == 0
 
 
 def test_exclusion_covering_entire_field_yields_no_waypoints():
@@ -61,9 +69,9 @@ def test_exclusion_covering_entire_field_yields_no_waypoints():
         ]
     )
 
-    waypoints = generate_coverage_pattern(FIELD, exclusions=[full_cover], row_spacing_m=20.0)
+    legs = generate_coverage_pattern(FIELD, exclusions=[full_cover], row_spacing_m=20.0)
 
-    assert waypoints == []
+    assert legs == []
 
 
 def test_non_positive_row_spacing_raises_value_error():

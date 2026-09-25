@@ -14,9 +14,23 @@ def generate_coverage_pattern(
     inclusive: Polygon,
     exclusions: list[Polygon],
     row_spacing_m: float,
-) -> list[tuple[float, float]]:
-    """Generate an ordered lawnmower waypoint path covering `inclusive`
-    while avoiding `exclusions`. Returns [(lon, lat), ...].
+) -> list[list[tuple[float, float]]]:
+    """Generate an ordered lawnmower coverage pattern over `inclusive`
+    while avoiding `exclusions`.
+
+    Returns a list of *legs*: [[(lon, lat), ...], ...]. Each leg is one
+    contiguous, directly drivable polyline -- a straight line between any
+    two consecutive points *within* a leg stays out of every exclusion
+    zone. A row that no exclusion touches contributes one leg; a row an
+    exclusion splits in two contributes two legs.
+
+    Consumers must treat each leg as independently drivable and are
+    responsible for routing the rover from the end of one leg to the start
+    of the next -- this library does no road-network routing (per the
+    design spec's Route Planning scope). Do NOT concatenate the legs back
+    into a single flat path: the joins between legs are exactly the gaps
+    that exist because an exclusion zone sits between them, so driving
+    them straight would cut through the exclusion.
     """
     if row_spacing_m <= 0:
         raise ValueError("row_spacing_m must be positive")
@@ -31,7 +45,7 @@ def generate_coverage_pattern(
     minx, miny, maxx, maxy = inclusive.bounds
     row_spacing_deg = row_spacing_m / METERS_PER_DEGREE_LAT
 
-    waypoints: list[tuple[float, float]] = []
+    legs: list[list[tuple[float, float]]] = []
     row_index = 0
     lat = miny + row_spacing_deg / 2  # start half a row in from the edge
 
@@ -43,13 +57,12 @@ def generate_coverage_pattern(
         if row_index % 2 == 1:
             segments = [segment[::-1] for segment in reversed(segments)]
 
-        for segment in segments:
-            waypoints.extend(segment)
+        legs.extend(segments)
 
         lat += row_spacing_deg
         row_index += 1
 
-    return waypoints
+    return legs
 
 
 def _as_line_segments(geometry) -> list[list[tuple[float, float]]]:

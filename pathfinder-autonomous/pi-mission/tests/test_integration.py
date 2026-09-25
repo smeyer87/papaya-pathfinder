@@ -26,15 +26,16 @@ POND = Polygon(
 
 
 def test_generated_pattern_waypoints_are_never_inside_the_pond():
-    waypoints = generate_coverage_pattern(FIELD, exclusions=[POND], row_spacing_m=15.0)
+    legs = generate_coverage_pattern(FIELD, exclusions=[POND], row_spacing_m=15.0)
 
-    for lon, lat in waypoints:
-        assert find_intruded_exclusion((lon, lat), [POND]) is None
+    for leg in legs:
+        for lon, lat in leg:
+            assert find_intruded_exclusion((lon, lat), [POND]) is None
 
 
 def test_dead_reckoned_position_along_first_leg_stays_reasonable():
-    waypoints = generate_coverage_pattern(FIELD, exclusions=[], row_spacing_m=20.0)
-    start_lon, start_lat = waypoints[0]
+    legs = generate_coverage_pattern(FIELD, exclusions=[], row_spacing_m=20.0)
+    start_lon, start_lat = legs[0][0]
 
     fusion = PositionFusion(
         GpsFix(lat=start_lat, lon=start_lon, accuracy_m=2.0, timestamp=0.0)
