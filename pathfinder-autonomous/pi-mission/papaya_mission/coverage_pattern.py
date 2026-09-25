@@ -4,6 +4,8 @@ Planning notes -- open fields, gentle slopes, no road-network routing.
 """
 from __future__ import annotations
 
+import math
+
 from shapely.geometry import LineString, Polygon
 from shapely.ops import unary_union
 
@@ -45,11 +47,19 @@ def generate_coverage_pattern(
     minx, miny, maxx, maxy = inclusive.bounds
     row_spacing_deg = row_spacing_m / METERS_PER_DEGREE_LAT
 
-    legs: list[list[tuple[float, float]]] = []
-    row_index = 0
-    lat = miny + row_spacing_deg / 2  # start half a row in from the edge
+    # Distribute the rows evenly across the full height rather than stepping
+    # by a fixed spacing from the south edge: a leftover strip shorter than one
+    # row spacing would otherwise be dropped with no warning (a 40m field at
+    # 30m spacing got a single row at 15m, leaving 62% uncovered). Computing
+    # each row's latitude from its index also avoids float drift from
+    # repeatedly accumulating `lat += row_spacing_deg`.
+    height_deg = maxy - miny
+    n_rows = max(1, math.ceil(height_deg / row_spacing_deg))
+    row_lats = [miny + (i + 0.5) * height_deg / n_rows for i in range(n_rows)]
 
-    while lat <= maxy:
+    legs: list[list[tuple[float, float]]] = []
+
+    for row_index, lat in enumerate(row_lats):
         row_line = LineString([(minx, lat), (maxx, lat)])
         intersection = allowed_area.intersection(row_line)
 
@@ -58,9 +68,6 @@ def generate_coverage_pattern(
             segments = [segment[::-1] for segment in reversed(segments)]
 
         legs.extend(segments)
-
-        lat += row_spacing_deg
-        row_index += 1
 
     return legs
 

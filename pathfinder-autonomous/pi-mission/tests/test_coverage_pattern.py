@@ -1,7 +1,12 @@
+import math
+
 import pytest
 from shapely.geometry import LineString, Polygon
 
-from papaya_mission.coverage_pattern import generate_coverage_pattern
+from papaya_mission.coverage_pattern import (
+    METERS_PER_DEGREE_LAT,
+    generate_coverage_pattern,
+)
 
 FIELD = Polygon(
     [
@@ -72,6 +77,40 @@ def test_exclusion_covering_entire_field_yields_no_waypoints():
     legs = generate_coverage_pattern(FIELD, exclusions=[full_cover], row_spacing_m=20.0)
 
     assert legs == []
+
+
+def test_rows_span_the_full_field_height_when_height_is_not_a_row_multiple():
+    """A 40m-tall field with 30m spacing used to yield a single row at 15m,
+    leaving the northern ~62% uncovered. Rows must now spread across the
+    whole height so the last one lands inside the field.
+    """
+    spacing_m = 30.0
+    height_deg = 40.0 / METERS_PER_DEGREE_LAT
+    miny, maxy = 38.000, 38.000 + height_deg
+    field = Polygon(
+        [(-85.001, miny), (-85.001, maxy), (-85.000, maxy), (-85.000, miny), (-85.001, miny)]
+    )
+
+    legs = generate_coverage_pattern(field, exclusions=[], row_spacing_m=spacing_m)
+
+    row_spacing_deg = spacing_m / METERS_PER_DEGREE_LAT
+    assert len(legs) == math.ceil(height_deg / row_spacing_deg) == 2
+    last_row_lat = legs[-1][0][1]
+    assert maxy - last_row_lat < row_spacing_deg
+
+
+def test_field_shorter_than_half_a_row_spacing_still_gets_one_row():
+    """Previously returned zero waypoints with no error."""
+    height_deg = 5.0 / METERS_PER_DEGREE_LAT
+    miny, maxy = 38.000, 38.000 + height_deg
+    field = Polygon(
+        [(-85.001, miny), (-85.001, maxy), (-85.000, maxy), (-85.000, miny), (-85.001, miny)]
+    )
+
+    legs = generate_coverage_pattern(field, exclusions=[], row_spacing_m=30.0)
+
+    assert len(legs) == 1
+    assert miny <= legs[0][0][1] <= maxy
 
 
 def test_non_positive_row_spacing_raises_value_error():
