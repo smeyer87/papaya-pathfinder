@@ -27,7 +27,8 @@ Backend on http://localhost:8000, health check at `/health`.
 Requires `.env`'s `MONGO_URI` to already be set to a reachable Atlas
 cluster:
 
-    python3 -m venv .venv && source .venv/bin/activate
+    python3 -m venv .venv
+    source .venv/bin/activate   # Windows: .venv\Scripts\activate
     pip install -r requirements.txt
     pytest -v
 
