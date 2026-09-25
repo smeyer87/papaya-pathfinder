@@ -7,7 +7,7 @@ from pymongo import MongoClient
 from app.db import ensure_indexes, get_database
 from app.main import app
 
-TEST_MONGO_URI = os.environ.get("MONGO_URI", "mongodb://localhost:27017")
+TEST_MONGO_URI = os.environ["MONGO_URI"]
 TEST_DB_NAME = "papaya_pathfinder_test"
 
 
@@ -30,8 +30,10 @@ def client(db):
         app.dependency_overrides[get_database] = lambda: db
         with TestClient(app) as test_client:
             yield test_client
-        app.dependency_overrides.clear()
     finally:
+        # Must run even when the test body raises: a leaked override would point
+        # every later test at this already-dropped database.
+        app.dependency_overrides.pop(get_database, None)
         # Restore original environment
         if original_db_name is None:
             os.environ.pop("MONGO_DB_NAME", None)

@@ -8,9 +8,23 @@ from pymongo.database import Database
 load_dotenv()
 
 
+_client: MongoClient | None = None
+
+
 def get_client() -> MongoClient:
-    uri = os.environ.get("MONGO_URI", "mongodb://localhost:27017")
-    return MongoClient(uri)
+    """Return the process-wide MongoClient.
+
+    MongoClient is itself a connection pool and is designed to be created once
+    and shared. Building one per request would mean a fresh DNS/TLS handshake
+    and a fresh pool on every HTTP call, none of which ever get closed.
+
+    MONGO_URI is required -- no fallback to a local mongod, so a missing .env
+    fails loudly instead of silently pointing at the wrong database.
+    """
+    global _client
+    if _client is None:
+        _client = MongoClient(os.environ["MONGO_URI"])
+    return _client
 
 
 def get_database(client: MongoClient = Depends(get_client)) -> Database:
