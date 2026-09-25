@@ -3,8 +3,8 @@
 Pure geometry/algorithm layer for MP-1: GPS+IMU dead-reckoning position
 fusion with a growing error-circle, boustrophedon coverage-pattern
 generation, and exclusion-zone intrusion checks. See
-`docs/superpowers/specs/2026-09-24-mp1-map-detect-explore-design.md` for
-the design this implements.
+`../../docs/superpowers/specs/2026-09-24-mp1-map-detect-explore-design.md`
+for the design this implements.
 
 No hardware I/O here -- `GpsFix`/`ImuReading` are plain data a later
 sensor-driver layer will produce from real hardware; this package only
@@ -13,7 +13,8 @@ mission-flow state machine plan that imports these modules.
 
 ## Run the tests
 
-    python3 -m venv .venv && source .venv/bin/activate
+    python3 -m venv .venv
+    source .venv/bin/activate   # Windows: .venv\Scripts\activate
     pip install -r requirements.txt
     pytest -v
 
