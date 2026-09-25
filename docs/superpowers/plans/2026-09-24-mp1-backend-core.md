@@ -87,14 +87,26 @@ pathfinder-autonomous/
 `pathfinder-autonomous/backend/requirements.txt`:
 
 ```
-fastapi==0.115.0
-uvicorn[standard]==0.32.0
+fastapi==0.141.1
+uvicorn[standard]==0.54.0
 pymongo==4.9.1
-pydantic==2.9.2
-pytest==8.3.3
-httpx==0.27.2
+pydantic==2.13.5
+pytest==9.1.1
+httpx==0.28.1
 python-dotenv==1.0.1
 ```
+
+(Versions bumped 2026-09-25 from the plan's original pins — this machine's
+only available Python was 3.14.3, and the original pins had no prebuilt
+`pydantic-core` wheel for it, falling back to a Rust source build that
+failed without full MSVC C++ build tools installed. Rather than guess
+compatible version numbers, these were verified by actually installing
+into the venv and confirming a clean `pip check` plus a working FastAPI
+app + `TestClient` round-trip — see commit history for the verification.
+`@app.on_event("startup")` still works on FastAPI 0.141.1, just with a
+deprecation warning nudging toward the newer `lifespan` pattern — not
+changed here, since it still functions and isn't worth the churn
+preemptively.)
 
 `pathfinder-autonomous/backend/Dockerfile`:
 
