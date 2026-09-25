@@ -61,3 +61,21 @@ def test_far_away_detection_does_not_count_as_a_match():
 
     assert result.cleared == [known]
     assert result.confirmed == []
+
+
+def test_multiple_nearby_candidates_matches_the_first_one():
+    """Verify that when multiple freshly_detected obstacles fall within
+    match_radius_m of a known obstacle, the first one in the list is matched."""
+    known = _obstacle(-85.0, 38.0, "temporary")
+    # Both candidates are within 3m of known (roughly 0.000027 deg ≈ 3m)
+    candidate_a = _obstacle(-85.000015, 38.0, "temporary")  # ~1.5m away
+    candidate_b = _obstacle(-85.00003, 38.0, "temporary")   # ~3m away
+
+    result = reconcile_obstacles([known], [candidate_a, candidate_b], now=NOW, match_radius_m=3.0)
+
+    # Should confirm the known obstacle (with its original position)
+    assert len(result.confirmed) == 1
+    assert result.confirmed[0].position == known.position
+    assert result.confirmed[0].last_confirmed_at == NOW
+    assert result.cleared == []
+    assert result.discrepancies == []
