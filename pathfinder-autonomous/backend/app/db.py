@@ -30,3 +30,4 @@ def ensure_indexes(db: Database) -> None:
         name="uniq_active_rover",
     )
     db.geofences.create_index([("boundary", "2dsphere")])
+    db.commands.create_index([("rover_id", ASCENDING), ("status", ASCENDING)])
