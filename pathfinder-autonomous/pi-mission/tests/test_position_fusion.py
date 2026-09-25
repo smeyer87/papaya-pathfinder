@@ -1,6 +1,14 @@
 import math
 
-from papaya_mission.position_fusion import GpsFix, ImuReading, PositionFusion
+import pytest
+
+from papaya_mission.position_fusion import (
+    METERS_PER_DEGREE_LAT,
+    GpsFix,
+    ImuReading,
+    PositionEstimate,
+    PositionFusion,
+)
 
 
 def test_seeding_with_gps_fix_sets_initial_estimate():
@@ -56,6 +64,54 @@ def test_new_gps_fix_resets_error_radius_and_position():
     assert corrected.lat == 38.001
     assert corrected.lon == -85.001
     assert corrected.error_radius_m == 1.5  # reset, not the grown drift value
+
+
+def test_as_lon_lat_returns_lon_first():
+    """The geometry modules take raw (lon, lat) tuples while this module
+    uses named fields; this bridge exists so callers never hand-build the
+    tuple in the wrong order.
+    """
+    estimate = PositionEstimate(
+        lat=38.0, lon=-85.0, error_radius_m=2.0, timestamp=0.0
+    )
+
+    assert estimate.as_lon_lat() == (-85.0, 38.0)
+
+
+def test_positional_construction_is_rejected():
+    """Positional args made GpsFix(*lon_lat_tuple, ...) a silent lat/lon
+    swap. kw_only makes it a TypeError instead.
+    """
+    with pytest.raises(TypeError):
+        GpsFix(38.0, -85.0, 2.0, 0.0)
+
+
+def test_longitude_update_uses_the_pre_move_latitude():
+    """The cos() term scaling the longitude delta must use the latitude the
+    rover started the step at, not the one it just moved to. An oversized
+    step exaggerates what is otherwise a sub-millimeter ordering error.
+    """
+    start_lat, start_lon = 38.0, -85.0
+    fusion = PositionFusion(
+        GpsFix(lat=start_lat, lon=start_lon, accuracy_m=2.0, timestamp=0.0)
+    )
+
+    dt, accel, heading = 100.0, 2.0, 45.0
+    estimate = fusion.on_imu_reading(
+        ImuReading(
+            heading_deg=heading,
+            forward_acceleration_mps2=accel,
+            timestamp=dt,
+        )
+    )
+
+    distance_m = (accel * dt) * dt
+    heading_rad = math.radians(heading)
+    expected_lon = start_lon + (distance_m * math.sin(heading_rad)) / (
+        METERS_PER_DEGREE_LAT * math.cos(math.radians(start_lat))
+    )
+
+    assert math.isclose(estimate.lon, expected_lon, rel_tol=1e-12)
 
 
 def test_zero_or_negative_dt_is_ignored():
