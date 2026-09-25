@@ -17,6 +17,7 @@ parallel with this design session), into one running process on the Pi.
 | Overall structure | Thin orchestrator (`runtime.py`) that sequences calls into already-tested modules — no new business logic, no event bus. If MP-2–MP-4 later need pub-sub, that refactor stays contained to `runtime.py` since every other module is already decoupled |
 | Crash/power-loss recovery | Auto-resume: on restart, if local storage has an in-progress `SweepSession`, treat it like any other interruption — run resume-validation, continue from `last_completed_waypoint_index + 1`. No operator action required |
 | Loop timing (named constants, all overridable) | `TICK_HZ = 10` (100ms tick: IMU sample + sensor checks), `COMMAND_POLL_INTERVAL_S = 1.0`, `TELEMETRY_SAMPLE_INTERVAL_S = 5.0` (separate from the existing 60s SQLite commit-batching interval) |
+| Bump-sensor safety ownership | **Confirmed:** the ESP32 owns bump-sensor safety autonomously — a hardware interrupt line on the I2C GPIO-expander cuts the drive train directly at the firmware level, with zero Pi involvement in the stop itself. This was already true in the approved MP-1 design spec (Architecture — Sensing), not a new decision. Its consequence for Mission Runtime: `Esp32Link` never *commands* a stop — `poll_bump_events()`/`status()` only ever *report* a stop that already happened. This is exactly why a dropped Pi↔ESP32 link isn't a safety event (see Error handling below): the interrupt-driven cutoff doesn't route through the link that could drop. |
 
 ## Architecture & file structure
 
