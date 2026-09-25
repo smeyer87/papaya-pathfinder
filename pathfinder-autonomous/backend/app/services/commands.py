@@ -5,9 +5,19 @@ from bson.errors import InvalidId
 from pymongo.database import Database
 
 from app.models.command import Command, CommandCreate
+from app.services import geofences as geofence_service
 from app.services import rovers as rover_service
 
-_STOP_TYPES = {"pause_sweep", "stop_sweep", "abort_home"}
+# Types that claim the one-active-rover lock. resume_sweep re-asserts it so that
+# a rover cannot resume into a fleet where something else started driving.
+_START_TYPES = {"start_sweep", "resume_sweep"}
+
+# Types that release the lock. pause_sweep is deliberately NOT here: a paused
+# mission still owns the rover.
+_STOP_TYPES = {"stop_sweep", "abort_home"}
+
+# Types whose payload may carry a geofence_id that must refer to a real geofence.
+_GEOFENCE_PAYLOAD_TYPES = {"start_sweep", "update_geofence"}
 
 
 class CommandNotFound(Exception):
@@ -32,7 +42,13 @@ def _doc_to_command(doc: dict) -> Command:
 def enqueue_command(db: Database, data: CommandCreate) -> Command:
     rover_service.get_rover(db, data.rover_id)  # raises RoverNotFound if missing
 
-    if data.type == "start_sweep":
+    if data.type in _GEOFENCE_PAYLOAD_TYPES:
+        geofence_id = data.payload.get("geofence_id")
+        if geofence_id is not None:
+            # raises GeofenceNotFound; done before any rover state changes
+            geofence_service.get_geofence(db, geofence_id)
+
+    if data.type in _START_TYPES:
         rover_service.activate_rover(db, data.rover_id)  # raises AnotherRoverActive
     elif data.type in _STOP_TYPES:
         rover_service.deactivate_rover(db, data.rover_id)

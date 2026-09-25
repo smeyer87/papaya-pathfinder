@@ -4,6 +4,7 @@ from pymongo.database import Database
 from app.db import get_database
 from app.models.command import Command, CommandCreate
 from app.services import commands as command_service
+from app.services import geofences as geofence_service
 from app.services import rovers as rover_service
 
 router = APIRouter(prefix="/commands", tags=["commands"])
@@ -16,6 +17,8 @@ def enqueue_command(
     try:
         return command_service.enqueue_command(db, data)
     except rover_service.RoverNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except geofence_service.GeofenceNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except rover_service.AnotherRoverActive as exc:
         raise HTTPException(
