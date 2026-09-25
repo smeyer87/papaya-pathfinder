@@ -18,6 +18,9 @@ def generate_coverage_pattern(
     """Generate an ordered lawnmower waypoint path covering `inclusive`
     while avoiding `exclusions`. Returns [(lon, lat), ...].
     """
+    if row_spacing_m <= 0:
+        raise ValueError("row_spacing_m must be positive")
+
     allowed_area = inclusive
     if exclusions:
         allowed_area = inclusive.difference(unary_union(exclusions))

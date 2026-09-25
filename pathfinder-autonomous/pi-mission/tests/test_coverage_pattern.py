@@ -1,3 +1,4 @@
+import pytest
 from shapely.geometry import Polygon
 
 from papaya_mission.coverage_pattern import generate_coverage_pattern
@@ -63,3 +64,15 @@ def test_exclusion_covering_entire_field_yields_no_waypoints():
     waypoints = generate_coverage_pattern(FIELD, exclusions=[full_cover], row_spacing_m=20.0)
 
     assert waypoints == []
+
+
+def test_non_positive_row_spacing_raises_value_error():
+    """Test that zero row_spacing_m raises ValueError."""
+    with pytest.raises(ValueError, match="row_spacing_m must be positive"):
+        generate_coverage_pattern(FIELD, exclusions=[], row_spacing_m=0.0)
+
+
+def test_negative_row_spacing_raises_value_error():
+    """Test that negative row_spacing_m raises ValueError."""
+    with pytest.raises(ValueError, match="row_spacing_m must be positive"):
+        generate_coverage_pattern(FIELD, exclusions=[], row_spacing_m=-5.0)
