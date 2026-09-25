@@ -9,10 +9,9 @@ why the error circle exists and why it resets at every GPS fix.
 """
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 
-from papaya_mission.geo_utils import METERS_PER_DEGREE_LAT
+from papaya_mission.geo_utils import METERS_PER_DEGREE_LAT, project_position
 
 
 # These three are kw_only so that a positional call can never silently swap
@@ -115,16 +114,9 @@ class PositionFusion:
         self._velocity_mps += reading.forward_acceleration_mps2 * dt
         distance_m = self._velocity_mps * dt
 
-        heading_rad = math.radians(reading.heading_deg)
-        # Both deltas are derived from the latitude the step *started* at --
-        # scaling the longitude delta by the post-move latitude would use a
-        # cos() term for a position the rover has not reached yet.
-        delta_lat = (distance_m * math.cos(heading_rad)) / METERS_PER_DEGREE_LAT
-        delta_lon = (distance_m * math.sin(heading_rad)) / (
-            METERS_PER_DEGREE_LAT * math.cos(math.radians(self._lat))
+        self._lat, self._lon = project_position(
+            self._lat, self._lon, reading.heading_deg, distance_m
         )
-        self._lat += delta_lat
-        self._lon += delta_lon
         self._heading_deg = reading.heading_deg
 
         self._error_radius_m += self._drift_rate_m_per_s * dt
