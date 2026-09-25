@@ -29,3 +29,4 @@ def ensure_indexes(db: Database) -> None:
         partialFilterExpression={"status": "active"},
         name="uniq_active_rover",
     )
+    db.geofences.create_index([("boundary", "2dsphere")])
