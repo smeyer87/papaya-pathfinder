@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pymongo.database import Database
+from pymongo.errors import WriteError
 
 from app.db import get_database
 from app.models.geofence import Geofence, GeofenceCreate
@@ -12,7 +13,13 @@ router = APIRouter(prefix="/geofences", tags=["geofences"])
 def create_geofence(
     data: GeofenceCreate, db: Database = Depends(get_database)
 ) -> Geofence:
-    return geofence_service.create_geofence(db, data)
+    try:
+        return geofence_service.create_geofence(db, data)
+    except WriteError as exc:
+        # The 2dsphere index validates geometry at insert time and rejects rings
+        # that pydantic cannot see are bad (e.g. self-intersecting "bowties").
+        # That is a bad request, not a server fault.
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("", response_model=list[Geofence])

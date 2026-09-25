@@ -42,3 +42,33 @@ def test_geo_polygon_rejects_too_few_points():
 
     with pytest.raises(ValidationError):
         GeoPolygon(coordinates=[ring])
+
+
+def test_geo_polygon_rejects_out_of_range_longitude():
+    ring = [(-85.0, 38.0), (200.0, 38.1), (-84.9, 38.1), (-84.9, 38.0), (-85.0, 38.0)]
+
+    with pytest.raises(ValidationError) as exc_info:
+        GeoPolygon(coordinates=[ring])
+
+    assert "longitude" in str(exc_info.value)
+
+
+def test_geo_polygon_rejects_out_of_range_latitude():
+    ring = [(-85.0, 38.0), (-85.0, 95.0), (-84.9, 38.1), (-84.9, 38.0), (-85.0, 38.0)]
+
+    with pytest.raises(ValidationError) as exc_info:
+        GeoPolygon(coordinates=[ring])
+
+    assert "latitude" in str(exc_info.value)
+
+
+def test_geo_polygon_range_error_names_the_ring():
+    outer = [(-85.0, 38.0), (-85.0, 38.1), (-84.9, 38.1), (-84.9, 38.0), (-85.0, 38.0)]
+    hole = [(-85.0, 38.0), (-85.0, 38.05), (-999.0, 38.05), (-84.95, 38.0), (-85.0, 38.0)]
+
+    with pytest.raises(ValidationError) as exc_info:
+        GeoPolygon(coordinates=[outer, hole])
+
+    message = str(exc_info.value)
+    assert "ring 1" in message
+    assert "-999" in message
