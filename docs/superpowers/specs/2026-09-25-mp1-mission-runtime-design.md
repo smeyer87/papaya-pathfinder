@@ -1,6 +1,6 @@
-# MP-1 Mission Runtime — Design Notes (in progress)
+# MP-1 Mission Runtime — Design Notes
 
-*Working draft, updated live during brainstorming. Not yet approved.*
+*Approved 2026-09-25.*
 
 This is the orchestrator that ties together the four already-approved
 Pi-mission plans — Position & Coverage Geometry, Obstacle Detection &
@@ -40,9 +40,10 @@ pathfinder-autonomous/pi-mission/papaya_mission/
                         #        designed to match this. status() lets Mission Runtime check
                         #        for a halted-on-contact state after a link outage before
                         #        resuming movement commands (see Error handling).
-  runtime_config.py     # NEW — TICK_HZ, COMMAND_POLL_INTERVAL_S, TELEMETRY_SAMPLE_INTERVAL_S,
-                        #        rover_id/backend_base_url/local_db_path loaded from .env
-                        #        (same convention as backend/)
+  runtime_config.py     # NEW — TICK_HZ, COMMAND_POLL_INTERVAL_S, TELEMETRY_SAMPLE_INTERVAL_S
+                        #        as hardcoded named constants (overridable in code, not env);
+                        #        rover_id/backend_base_url/local_db_path loaded from .env at
+                        #        runtime (same convention as backend/)
   backend_client.py     # NEW — fetch_rover(), fetch_geofence(), poll_commands(), ack_command()
                         #        — the read/poll half; sync_client.py (already planned) is the
                         #        push half
@@ -107,7 +108,7 @@ flowchart TD
    `local_store.save_telemetry_record`, and call `local_store.commit()`
    whenever `should_commit_telemetry(...)` says so; every
    `COMMAND_POLL_INTERVAL_S`, `backend_client.poll_commands(rover_id)` and
-   act on `pause_sweep`/`stop_sweep`/`abort_home`/`update_geofence`.
+   act on `pause_sweep`/`resume_sweep`/`stop_sweep`/`abort_home`/`update_geofence`.
 
 **Every object `runtime.py` touches in one tick:**
 
