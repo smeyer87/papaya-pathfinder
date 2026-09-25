@@ -23,7 +23,17 @@ def db():
 
 @pytest.fixture
 def client(db):
-    app.dependency_overrides[get_database] = lambda: db
-    with TestClient(app) as test_client:
-        yield test_client
-    app.dependency_overrides.clear()
+    # Monkeypatch MONGO_DB_NAME to use test database during startup event
+    original_db_name = os.environ.get("MONGO_DB_NAME")
+    try:
+        os.environ["MONGO_DB_NAME"] = TEST_DB_NAME
+        app.dependency_overrides[get_database] = lambda: db
+        with TestClient(app) as test_client:
+            yield test_client
+        app.dependency_overrides.clear()
+    finally:
+        # Restore original environment
+        if original_db_name is None:
+            os.environ.pop("MONGO_DB_NAME", None)
+        else:
+            os.environ["MONGO_DB_NAME"] = original_db_name
