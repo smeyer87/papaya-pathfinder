@@ -12,7 +12,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-METERS_PER_DEGREE_LAT = 111_320.0
+from papaya_mission.geo_utils import METERS_PER_DEGREE_LAT
 
 
 # These three are kw_only so that a positional call can never silently swap
@@ -27,6 +27,10 @@ class GpsFix:
     accuracy_m: float
     timestamp: float  # seconds; just needs consistent units with ImuReading
 
+    def __post_init__(self) -> None:
+        if self.accuracy_m < 0:
+            raise ValueError(f"accuracy_m must be >= 0, got {self.accuracy_m}")
+
 
 @dataclass(frozen=True, kw_only=True)
 class ImuReading:
@@ -34,11 +38,16 @@ class ImuReading:
     forward_acceleration_mps2: float  # signed, positive = accelerating forward
     timestamp: float
 
+    def __post_init__(self) -> None:
+        if not (0.0 <= self.heading_deg < 360.0):
+            raise ValueError(f"heading_deg must be in [0, 360), got {self.heading_deg}")
+
 
 @dataclass(frozen=True, kw_only=True)
 class PositionEstimate:
     lat: float
     lon: float
+    heading_deg: float
     error_radius_m: float
     timestamp: float
 
@@ -53,9 +62,15 @@ class PositionEstimate:
 
 
 class PositionFusion:
-    def __init__(self, initial_fix: GpsFix, drift_rate_m_per_s: float = 0.5):
+    def __init__(
+        self,
+        initial_fix: GpsFix,
+        initial_heading_deg: float = 0.0,
+        drift_rate_m_per_s: float = 0.5,
+    ):
         self._lat = initial_fix.lat
         self._lon = initial_fix.lon
+        self._heading_deg = initial_heading_deg
         self._error_radius_m = initial_fix.accuracy_m
         self._velocity_mps = 0.0
         self._last_timestamp = initial_fix.timestamp
@@ -66,6 +81,7 @@ class PositionFusion:
         return PositionEstimate(
             lat=self._lat,
             lon=self._lon,
+            heading_deg=self._heading_deg,
             error_radius_m=self._error_radius_m,
             timestamp=self._last_timestamp,
         )
@@ -109,6 +125,7 @@ class PositionFusion:
         )
         self._lat += delta_lat
         self._lon += delta_lon
+        self._heading_deg = reading.heading_deg
 
         self._error_radius_m += self._drift_rate_m_per_s * dt
         self._last_timestamp = reading.timestamp

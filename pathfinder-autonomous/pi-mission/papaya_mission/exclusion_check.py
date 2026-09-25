@@ -11,7 +11,7 @@ import math
 from shapely.geometry import Point, Polygon
 from shapely.ops import transform
 
-METERS_PER_DEGREE_LAT = 111_320.0
+from papaya_mission.geo_utils import METERS_PER_DEGREE_LAT
 
 
 def exclusion_intrusion_depth_m(

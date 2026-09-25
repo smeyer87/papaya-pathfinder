@@ -9,7 +9,7 @@ import math
 from shapely.geometry import LineString, Polygon
 from shapely.ops import unary_union
 
-METERS_PER_DEGREE_LAT = 111_320.0
+from papaya_mission.geo_utils import METERS_PER_DEGREE_LAT
 
 
 def generate_coverage_pattern(

@@ -72,7 +72,7 @@ def test_as_lon_lat_returns_lon_first():
     tuple in the wrong order.
     """
     estimate = PositionEstimate(
-        lat=38.0, lon=-85.0, error_radius_m=2.0, timestamp=0.0
+        lat=38.0, lon=-85.0, heading_deg=0.0, error_radius_m=2.0, timestamp=0.0
     )
 
     assert estimate.as_lon_lat() == (-85.0, 38.0)
@@ -124,3 +124,42 @@ def test_zero_or_negative_dt_is_ignored():
 
     assert estimate.lat == 38.0
     assert estimate.lon == -85.0
+
+
+def test_heading_deg_updates_with_imu_readings():
+    fix = GpsFix(lat=38.0, lon=-85.0, accuracy_m=2.0, timestamp=0.0)
+    fusion = PositionFusion(fix, initial_heading_deg=45.0)
+
+    assert fusion.current_estimate.heading_deg == 45.0
+
+    estimate = fusion.on_imu_reading(
+        ImuReading(heading_deg=270.0, forward_acceleration_mps2=0.0, timestamp=1.0)
+    )
+
+    assert estimate.heading_deg == 270.0
+
+
+def test_gps_fix_does_not_change_heading():
+    fix = GpsFix(lat=38.0, lon=-85.0, accuracy_m=2.0, timestamp=0.0)
+    fusion = PositionFusion(fix, initial_heading_deg=45.0)
+    fusion.on_imu_reading(
+        ImuReading(heading_deg=90.0, forward_acceleration_mps2=0.0, timestamp=1.0)
+    )
+
+    corrected = fusion.on_gps_fix(
+        GpsFix(lat=38.001, lon=-85.001, accuracy_m=1.5, timestamp=2.0)
+    )
+
+    assert corrected.heading_deg == 90.0  # unchanged by the GPS fix
+
+
+def test_imu_reading_rejects_heading_out_of_range():
+    with pytest.raises(ValueError):
+        ImuReading(heading_deg=360.0, forward_acceleration_mps2=0.0, timestamp=0.0)
+    with pytest.raises(ValueError):
+        ImuReading(heading_deg=-1.0, forward_acceleration_mps2=0.0, timestamp=0.0)
+
+
+def test_gps_fix_rejects_negative_accuracy():
+    with pytest.raises(ValueError):
+        GpsFix(lat=38.0, lon=-85.0, accuracy_m=-1.0, timestamp=0.0)
