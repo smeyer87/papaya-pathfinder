@@ -19,7 +19,7 @@ def test_sync_sweep_sessions_endpoint(client):
     response = client.post("/sync/sweep-sessions", json=payload)
 
     assert response.status_code == 200
-    assert response.json() == {"synced": 1}
+    assert response.json() == {"received": 1, "inserted": 1}
 
 
 def test_sync_obstacles_endpoint(client):
@@ -42,7 +42,7 @@ def test_sync_obstacles_endpoint(client):
     response = client.post("/sync/obstacles", json=payload)
 
     assert response.status_code == 200
-    assert response.json() == {"synced": 1}
+    assert response.json() == {"received": 1, "inserted": 1}
 
 
 def test_sync_telemetry_endpoint(client):
@@ -63,4 +63,4 @@ def test_sync_telemetry_endpoint(client):
     response = client.post("/sync/telemetry", json=payload)
 
     assert response.status_code == 200
-    assert response.json() == {"synced": 1}
+    assert response.json() == {"received": 1, "inserted": 1}

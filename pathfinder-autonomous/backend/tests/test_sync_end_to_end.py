@@ -70,7 +70,9 @@ def test_full_mission_sync_then_idempotent_retry(client):
         client.post("/sync/obstacles", json=obstacle_payload),
         client.post("/sync/telemetry", json=telemetry_payload),
     ]
-    assert all(r.status_code == 200 and r.json() == {"synced": 1} for r in first_pass)
+    assert all(
+        r.status_code == 200 and r.json() == {"received": 1, "inserted": 1} for r in first_pass
+    )
 
     # Simulate the connection dropping right after a successful sync, and
     # the rover retrying the same batch on its next Home-return checkpoint.
@@ -79,6 +81,12 @@ def test_full_mission_sync_then_idempotent_retry(client):
         client.post("/sync/obstacles", json=obstacle_payload),
         client.post("/sync/telemetry", json=telemetry_payload),
     ]
-    assert retry[0].json() == {"synced": 1}  # upsert -- still "processed", no duplicate created
-    assert retry[1].json() == {"synced": 1}  # upsert -- same
-    assert retry[2].json() == {"synced": 0}  # insert-only -- correctly reports nothing NEW
+    # `received` is the batch size on every call, so a client can always check
+    # "did the whole batch get through" without the answer depending on which
+    # endpoint it asked.
+    assert all(r.json()["received"] == 1 for r in retry)
+    # upsert -- every record is (re)written, so all of them still count
+    assert retry[0].json() == {"received": 1, "inserted": 1}
+    assert retry[1].json() == {"received": 1, "inserted": 1}
+    # insert-only -- correctly reports nothing NEW was written this time
+    assert retry[2].json() == {"received": 1, "inserted": 0}
