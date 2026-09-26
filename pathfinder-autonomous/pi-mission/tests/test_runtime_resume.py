@@ -1,4 +1,5 @@
 # pathfinder-autonomous/pi-mission/tests/test_runtime_resume.py
+import logging
 from datetime import datetime, timezone
 
 import httpx
@@ -102,6 +103,97 @@ def test_startup_auto_resumes_interrupted_session(tmp_path):
     # The known-obstacle set is snapshotted at arm time, so it holds exactly
     # the pre-crash rows -- nothing this resume pass goes on to detect.
     assert [row["id"] for row in runtime._resume_validation_known_rows] == ["obs-pre-crash"]
+
+
+def _interrupted_session(session_id: str, started_at: datetime) -> dict:
+    return {
+        "id": session_id,
+        "rover_id": "rover-1",
+        "geofence_id": "fence-1",
+        "status": "interrupted",
+        "pattern": [
+            {"order": 0, "position": {"type": "Point", "coordinates": [-85.0, 38.0]}},
+            {"order": 1, "position": {"type": "Point", "coordinates": [-85.0, 38.01]}},
+        ],
+        "last_completed_waypoint_index": 0,
+        "started_at": started_at,
+        "interrupted_at": started_at,
+        "completed_at": None,
+    }
+
+
+def test_startup_resumes_the_newest_of_several_resumable_sessions(tmp_path):
+    """Regression test: list_unsynced_sweep_sessions has no ORDER BY, so
+    candidates[0] was whatever SQLite happened to return first (insertion
+    order) -- an old interrupted-and-unsynced session could be resumed in
+    preference to a newer one, a realistic outcome after a stretch offline.
+    The newest started_at must win regardless of insertion order.
+    """
+    rover = {"_id": "rover-1", "name": "George"}
+    inclusive = {"_id": "fence-1", "type": "inclusive", "boundary": {"type": "Polygon", "coordinates": [FIELD_RING]}}
+    runtime, _ = _make_runtime(tmp_path, rover, geofences=[inclusive])
+    # Inserted oldest-first, so insertion order alone would pick the stale one.
+    local_store.save_sweep_session(
+        runtime.conn, _interrupted_session("sess-old", datetime(2026, 9, 20, 9, 0, tzinfo=timezone.utc))
+    )
+    local_store.save_sweep_session(
+        runtime.conn, _interrupted_session("sess-new", datetime(2026, 9, 25, 10, 0, tzinfo=timezone.utc))
+    )
+    local_store.commit(runtime.conn)
+
+    runtime.startup()
+
+    assert runtime.sweep_session is not None
+    assert runtime.sweep_session.id == "sess-new"
+
+
+def test_startup_warns_about_the_resumable_sessions_it_skips(tmp_path):
+    rover = {"_id": "rover-1", "name": "George"}
+    inclusive = {"_id": "fence-1", "type": "inclusive", "boundary": {"type": "Polygon", "coordinates": [FIELD_RING]}}
+    runtime, _ = _make_runtime(tmp_path, rover, geofences=[inclusive])
+    local_store.save_sweep_session(
+        runtime.conn, _interrupted_session("sess-old", datetime(2026, 9, 20, 9, 0, tzinfo=timezone.utc))
+    )
+    local_store.save_sweep_session(
+        runtime.conn, _interrupted_session("sess-new", datetime(2026, 9, 25, 10, 0, tzinfo=timezone.utc))
+    )
+    local_store.commit(runtime.conn)
+
+    logger = logging.getLogger("papaya_mission.runtime")
+    records: list[logging.LogRecord] = []
+    handler = logging.Handler()
+    handler.emit = records.append
+    logger.addHandler(handler)
+    try:
+        runtime.startup()
+    finally:
+        logger.removeHandler(handler)
+
+    warnings = [r.getMessage() for r in records if r.levelno == logging.WARNING]
+    assert any("sess-new" in m and "sess-old" in m for m in warnings)
+
+
+def test_startup_does_not_warn_about_a_single_resumable_session(tmp_path):
+    rover = {"_id": "rover-1", "name": "George"}
+    inclusive = {"_id": "fence-1", "type": "inclusive", "boundary": {"type": "Polygon", "coordinates": [FIELD_RING]}}
+    runtime, _ = _make_runtime(tmp_path, rover, geofences=[inclusive])
+    local_store.save_sweep_session(
+        runtime.conn, _interrupted_session("sess-only", datetime(2026, 9, 25, 10, 0, tzinfo=timezone.utc))
+    )
+    local_store.commit(runtime.conn)
+
+    logger = logging.getLogger("papaya_mission.runtime")
+    records: list[logging.LogRecord] = []
+    handler = logging.Handler()
+    handler.emit = records.append
+    logger.addHandler(handler)
+    try:
+        runtime.startup()
+    finally:
+        logger.removeHandler(handler)
+
+    assert [r for r in records if r.levelno >= logging.WARNING] == []
+    assert runtime.sweep_session.id == "sess-only"
 
 
 def test_startup_does_not_resume_a_completed_but_unsynced_session(tmp_path):

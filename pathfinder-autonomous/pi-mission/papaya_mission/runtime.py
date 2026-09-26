@@ -127,6 +127,18 @@ class MissionRuntime:
         ]
         if not candidates:
             return
+        # list_unsynced_sweep_sessions has no ORDER BY, so candidates[0] is
+        # whatever SQLite returns first -- insertion order, not recency. With
+        # an old interrupted-and-unsynced session still on disk alongside a
+        # newer one (realistic after a stretch offline), that resumed the
+        # wrong sweep. Sort newest-first here rather than changing the store's
+        # query: recency is this caller's policy, not a property of the table.
+        candidates.sort(key=lambda session: session["started_at"], reverse=True)
+        if len(candidates) > 1:
+            logger.warning(
+                "multiple resumable sweep sessions found; resuming the newest (%s), skipping %s",
+                candidates[0]["id"], [c["id"] for c in candidates[1:]],
+            )
         session_dict = candidates[0]
 
         pattern = [
