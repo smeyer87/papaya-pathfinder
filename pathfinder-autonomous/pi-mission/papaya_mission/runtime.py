@@ -18,7 +18,7 @@ from papaya_mission.esp32_link import Esp32Link
 from papaya_mission.row_spacing import derive_row_spacing_m
 from papaya_mission.runtime_config import SENSOR_DETECTION_WIDTH_M
 from papaya_mission.sensor_hub import SensorHub
-from papaya_mission.sweep_session import SweepSession, Waypoint
+from papaya_mission.sweep_session import SweepSession, SweepSessionStatus, Waypoint
 
 
 class MissionRuntime:
@@ -65,9 +65,83 @@ class MissionRuntime:
             for entry in self.rover.get("sensor_manifest", [])
             if entry.get("installed", True)
         }
-        # Task 6 extends this to check local storage for an in-progress
-        # session and resume it. Nothing found here yet -> stay idle,
-        # waiting for start_sweep (handled by the tick loop, Task 8).
+        self._resume_in_progress_session_if_any()
+
+    def _resume_in_progress_session_if_any(self) -> None:
+        candidates = [
+            s
+            for s in local_store.list_unsynced_sweep_sessions(self.conn)
+            if s["status"] in ("in_progress", "interrupted")
+        ]
+        if not candidates:
+            return
+        session_dict = candidates[0]
+
+        pattern = [
+            Waypoint(
+                order=wp["order"],
+                position=tuple(wp["position"]["coordinates"]),
+                leg_index=wp.get("leg_index", 0),
+            )
+            for wp in session_dict["pattern"]
+        ]
+        self.sweep_session = SweepSession(
+            id=session_dict["id"],
+            rover_id=session_dict["rover_id"],
+            geofence_id=session_dict["geofence_id"],
+            pattern=pattern,
+            status=SweepSessionStatus(session_dict["status"]),
+            last_completed_waypoint_index=session_dict["last_completed_waypoint_index"],
+            started_at=session_dict["started_at"],
+            interrupted_at=session_dict["interrupted_at"],
+            completed_at=session_dict["completed_at"],
+        )
+
+        all_geofences = backend_client.list_geofences(self.http_client, self.backend_base_url)
+        self.exclusion_polygons = [
+            shape(g["boundary"]) for g in all_geofences if g["type"] == "exclusive"
+        ]
+
+        self._resume_validation_collected = []
+        self._resume_validation_known_rows = []
+        if self.sweep_session.last_completed_waypoint_index >= 0:
+            resume_waypoint = next(
+                wp for wp in self.sweep_session.pattern
+                if wp.order == self.sweep_session.last_completed_waypoint_index
+            )
+            self._resume_validation_target = resume_waypoint.position
+            # Snapshot the known obstacles ONCE, here, at the moment
+            # resume-validation is armed -- the tick loop hasn't run yet, so
+            # nothing this pass detects can be in it. Re-querying the store
+            # at reconciliation time instead would be wrong: _detect_obstacles
+            # persists every fresh detection immediately (Task 7), so a live
+            # query would hand reconcile_obstacles each of this pass's own
+            # fresh detections as a "known" obstacle sitting 0m from itself.
+            # Its greedy nearest-first matching would then pair every fresh
+            # detection with its own just-written row, leaving the genuinely
+            # pre-existing obstacles unmatched and wrongly reported as
+            # cleared/discrepancies -- precisely the failure resume-validation
+            # exists to catch. (The alternative, tagging freshly inserted ids
+            # and subtracting them later, needs bookkeeping in every
+            # _save_obstacle caller for the same result; the snapshot is a
+            # single call at the one moment the boundary is unambiguous.)
+            #
+            # list_obstacles_for_session, not list_unsynced_obstacles: a
+            # Home-return sync during the interrupted pass marks obstacles
+            # synced, and an unsynced-only filter would drop them from the
+            # known set, so reconciliation would treat each one as never-seen.
+            #
+            # Raw store rows, not domain objects: Obstacle has no id field
+            # (ids are a persistence concern owned by local_store), so the row
+            # is the only place an existing obstacle's id lives -- and a
+            # confirmed re-detection has to be saved back under that id.
+            self._resume_validation_known_rows = local_store.list_obstacles_for_session(
+                self.conn, self.sweep_session.id
+            )
+
+        if self.sweep_session.status == SweepSessionStatus.INTERRUPTED:
+            self.sweep_session.resume()
+            self._save_sweep_session()
 
     def handle_start_sweep(self, payload: dict[str, Any]) -> None:
         geofence_id = payload["geofence_id"]
