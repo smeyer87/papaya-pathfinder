@@ -221,9 +221,16 @@ def list_unsynced_sweep_sessions(conn: sqlite3.Connection) -> list[dict[str, Any
 
 
 def get_sweep_session(conn: sqlite3.Connection, session_id: str) -> dict[str, Any] | None:
-    """A specific sweep session by id, synced or not -- used by
-    crash-recovery to reload the in-progress/interrupted session
-    without depending on it still being unsynced.
+    """A specific sweep session by id, synced or not -- unlike
+    list_unsynced_sweep_sessions, this still finds a session after a
+    Home-return sync has marked it synced.
+
+    Currently unused by production code: MissionRuntime's crash-recovery
+    path (_resume_in_progress_session_if_any) works from
+    list_unsynced_sweep_sessions, because a session it needs to resume is
+    by definition not yet synced. Kept as part of the store's read API for
+    by-id lookups (operator tooling, and any future path that needs a
+    completed-and-synced session back), and covered by tests.
     """
     row = conn.execute("SELECT * FROM sweep_sessions WHERE id = ?", (session_id,)).fetchone()
     return _row_to_sweep_session(row) if row is not None else None

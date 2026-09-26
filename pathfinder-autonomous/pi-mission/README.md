@@ -98,6 +98,17 @@ part of this plan. `runtime.py`'s `MissionRuntime` takes both as
 constructor arguments specifically so real drivers can be swapped in
 later without touching orchestration logic.
 
+**Note — that swap-in story holds for sensing, not for motion.** The
+`Esp32Link` contract currently covers bump-safety reporting and
+drive-status telemetry only; it has no drive/steering-commanding method
+yet, and `MissionRuntime` never issues a movement command anywhere in
+`tick()`. Actual navigation (driving toward the next waypoint) is not
+yet implemented: this runtime can *detect* waypoint arrival and make
+mission-level decisions off it, but it has no way to *cause* that
+arrival. A future hardware-integration pass needs to add both a
+movement-commanding method to `Esp32Link` and a navigation step to
+`tick()` before the rover can physically move itself.
+
 Per-tick duration is logged; a warning means a tick exceeded its
 `TICK_HZ` budget — see the MP-1 Mission Runtime design notes' "Scaling
 note" for what that means and what to do about it.
