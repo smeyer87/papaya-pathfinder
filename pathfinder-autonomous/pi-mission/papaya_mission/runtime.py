@@ -5,6 +5,7 @@ and sync into one running process. Owns no business logic of its own
 """
 from __future__ import annotations
 
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -15,10 +16,25 @@ from shapely.geometry import Polygon, shape
 from papaya_mission import backend_client, local_store
 from papaya_mission.coverage_pattern import generate_coverage_pattern
 from papaya_mission.esp32_link import Esp32Link
+from papaya_mission.exclusion_check import find_intruded_exclusion
+from papaya_mission.exclusion_decision import decide_exclusion_response
+from papaya_mission.gps_loss_decision import decide_gps_loss_response
+from papaya_mission.obstacle_detection import (
+    obstacle_from_bump_contact,
+    obstacle_from_ultrasonic_camera_detection,
+)
+from papaya_mission.position_fusion import GpsFix, PositionFusion
+from papaya_mission.resume_validation import reconcile_obstacles
 from papaya_mission.row_spacing import derive_row_spacing_m
-from papaya_mission.runtime_config import SENSOR_DETECTION_WIDTH_M
+from papaya_mission.runtime_config import (
+    GPS_LOSS_GRACE_PERIOD_S,
+    GPS_LOSS_MAX_ERROR_RADIUS_M,
+    SENSOR_DETECTION_WIDTH_M,
+)
 from papaya_mission.sensor_hub import SensorHub
 from papaya_mission.sweep_session import SweepSession, SweepSessionStatus, Waypoint
+
+RESUME_VALIDATION_MATCH_RADIUS_M = 3.0
 
 
 class MissionRuntime:
@@ -57,6 +73,7 @@ class MissionRuntime:
         # when a resume pass was armed. Snapshotted, not queried live -- see
         # _resume_in_progress_session_if_any (Task 6) for why.
         self._resume_validation_known_rows: list[dict[str, Any]] = []
+        self.mission_alert: str | None = None
 
     def startup(self) -> None:
         self.rover = backend_client.fetch_rover(self.http_client, self.backend_base_url, self.rover_id)
@@ -195,3 +212,202 @@ class MissionRuntime:
                 "completed_at": session.completed_at,
             },
         )
+
+    def tick(self) -> None:
+        now_monotonic = time.monotonic()
+        self._read_position(now_monotonic)
+        self._check_gps_loss(now_monotonic)
+        self._detect_obstacles()
+        self._check_exclusion_zones()
+
+    def _read_position(self, now_monotonic: float) -> None:
+        imu_reading = self.sensor_hub.imu.read()
+        gps_fix = self.sensor_hub.gps.read()
+
+        if self.position_fusion is None:
+            seed_fix = gps_fix or GpsFix(lat=0.0, lon=0.0, accuracy_m=999.0, timestamp=imu_reading.timestamp)
+            self.position_fusion = PositionFusion(seed_fix)
+            if gps_fix is not None:
+                self._last_gps_fix_monotonic = now_monotonic
+            return
+
+        if gps_fix is not None:
+            self.position_fusion.on_gps_fix(gps_fix)
+            self._last_gps_fix_monotonic = now_monotonic
+        else:
+            self.position_fusion.on_imu_reading(imu_reading)
+
+    def _check_gps_loss(self, now_monotonic: float) -> None:
+        if self._last_gps_fix_monotonic is None:
+            return
+        seconds_since_last_fix = now_monotonic - self._last_gps_fix_monotonic
+        response = decide_gps_loss_response(
+            seconds_since_last_fix=seconds_since_last_fix,
+            current_error_radius_m=self.position_fusion.current_estimate.error_radius_m,
+            grace_period_s=GPS_LOSS_GRACE_PERIOD_S,
+            max_error_radius_m=GPS_LOSS_MAX_ERROR_RADIUS_M,
+        )
+        if response == "stop_and_alert":
+            self.mission_alert = "gps_stop_and_alert"
+
+    def _detect_obstacles(self) -> None:
+        ultrasonic = self.sensor_hub.ultrasonic.read()
+        camera = self.sensor_hub.camera.read()
+        if ultrasonic is not None and camera is not None:
+            classified_type, confidence = camera
+            paired_obstacle = obstacle_from_ultrasonic_camera_detection(
+                rover_position=self.position_fusion.current_estimate,
+                relative_bearing_deg=ultrasonic.relative_bearing_deg,
+                range_m=ultrasonic.range_m,
+                classified_type=classified_type,
+                classification_confidence=confidence,
+                detected_at=datetime.now(timezone.utc),
+            )
+            self._save_obstacle(paired_obstacle)
+            self._collect_for_resume_validation(paired_obstacle)
+
+        # Bump contacts are a separate, reactive obstacle source -- kept
+        # independent of the ultrasonic+camera branch above (not folded
+        # into one shared variable) so a bump event can never overwrite
+        # or double-save a same-tick ultrasonic+camera detection.
+        for bump_event in self.esp32_link.poll_bump_events():
+            bump_obstacle = obstacle_from_bump_contact(
+                rover_position=self.position_fusion.current_estimate,
+                detected_at=bump_event.detected_at,
+            )
+            self._save_obstacle(bump_obstacle)
+
+    def _collect_for_resume_validation(self, obstacle) -> None:
+        if self._resume_validation_target is None:
+            return
+        self._resume_validation_collected.append(obstacle)
+
+        from papaya_mission.geo_utils import flat_earth_distance_m
+
+        estimate = self.position_fusion.current_estimate
+        current_position = (estimate.lon, estimate.lat)
+        distance_to_target = flat_earth_distance_m(current_position, self._resume_validation_target)
+        if distance_to_target > RESUME_VALIDATION_MATCH_RADIUS_M:
+            return  # still transiting back -- keep collecting, reconcile on arrival
+
+        # The known set is the snapshot taken when resume-validation was armed
+        # in _resume_in_progress_session_if_any (Task 6): the obstacles stored
+        # BEFORE this resume pass began. It is deliberately not re-queried
+        # here. _detect_obstacles saves each fresh detection the moment it is
+        # made, several ticks before this reconciliation runs, so a live
+        # list_obstacles_for_session call would include this pass's own fresh
+        # detections in the known set -- and reconcile_obstacles matches
+        # greedily nearest-first, so each fresh detection would "confirm"
+        # its own just-written row at 0m and crowd out the pre-existing
+        # obstacle it should have been matched against. See the arming site
+        # for the full rationale.
+        known_rows = self._resume_validation_known_rows
+        # A position can legitimately carry more than one row -- two bump
+        # contacts logged at the same position estimate, say -- so map each
+        # position to the list of ids stored there and let each confirmed
+        # entry consume one. A flat position->id dict would collapse those
+        # rows onto a single id, refreshing one row twice while leaving the
+        # other stale: the same duplicate-row failure this id lookup exists
+        # to prevent.
+        known_ids_by_position: dict[tuple[float, float], list[str]] = {}
+        for row in known_rows:
+            known_ids_by_position.setdefault(row["position"], []).append(row["id"])
+        known = [self._obstacle_dict_to_domain(row) for row in known_rows]
+        result = reconcile_obstacles(
+            known_obstacles=known,
+            freshly_detected=self._resume_validation_collected,
+            now=datetime.now(timezone.utc),
+        )
+        for confirmed in result.confirmed:
+            # A confirmed obstacle is a RE-detection of one we already store a
+            # row for, so it must reuse that row's id. That is what makes
+            # save_obstacle's upsert-by-id refresh the record in place (and
+            # re-flag it unsynced); minting a fresh id here would insert a
+            # second row for the same physical obstacle and defeat the upsert
+            # entirely.
+            #
+            # reconcile_obstacles builds each confirmed entry as
+            # dataclasses.replace(known, last_confirmed_at=now), which changes
+            # only that one field -- so the entry's position is identical to
+            # the known obstacle it came from and is a safe key back to that
+            # obstacle's stored id.
+            self._save_obstacle(
+                confirmed, obstacle_id=known_ids_by_position[confirmed.position].pop(0)
+            )
+        # result.new_detections deliberately needs no save here: each fresh
+        # detection was already persisted with its own new id by
+        # _save_obstacle when _detect_obstacles first saw it this pass.
+        # Saving again would mint a second id and duplicate the row.
+        #
+        # `cleared` and `discrepancies` are logged for operator review via
+        # telemetry/obstacle status -- no further action in v1.
+        self._resume_validation_target = None
+        self._resume_validation_collected = []
+        self._resume_validation_known_rows = []
+
+    @staticmethod
+    def _obstacle_dict_to_domain(obstacle_dict: dict[str, Any]):
+        from papaya_mission.obstacle import Obstacle
+
+        return Obstacle(
+            position=obstacle_dict["position"],
+            position_uncertainty_m=obstacle_dict["position_uncertainty_m"],
+            type=obstacle_dict["type"],
+            classification_confidence=obstacle_dict["classification_confidence"],
+            detection_method=obstacle_dict["detection_method"],
+            status=obstacle_dict["status"],
+            first_detected_at=obstacle_dict["first_detected_at"],
+            last_confirmed_at=obstacle_dict["last_confirmed_at"],
+        )
+
+    def _save_obstacle(self, obstacle, *, obstacle_id: str | None = None) -> None:
+        if self.sweep_session is None:
+            # MP-1's obstacle tracking is scoped to sweep sessions: the local
+            # store's obstacles.sweep_session_id is NOT NULL, matching the
+            # backend's non-optional Obstacle.sweep_session_id. An obstacle
+            # met while no session is active -- during transit, or a bump on
+            # the way home -- has no session to attach to, so there is no
+            # valid row to write and we skip persisting it rather than
+            # inserting a null session id the schema rejects.
+            #
+            # This costs nothing operationally: the rover still reacts to the
+            # obstacle through the normal avoidance path on this tick. Only
+            # the durable record is skipped, and a durable record outside a
+            # sweep session has nowhere to be reported to anyway.
+            return
+
+        lon, lat = obstacle.position
+        local_store.save_obstacle(
+            self.conn,
+            {
+                # A re-detected obstacle passes the id of the row it already
+                # has, so save_obstacle's upsert refreshes that row in place.
+                # A genuinely new detection gets a fresh id.
+                "id": obstacle_id or str(uuid.uuid4()),
+                "sweep_session_id": self.sweep_session.id,
+                "position": (lon, lat),
+                "position_uncertainty_m": obstacle.position_uncertainty_m,
+                "type": obstacle.type,
+                "classification_confidence": obstacle.classification_confidence,
+                "detection_method": obstacle.detection_method,
+                "status": obstacle.status,
+                "first_detected_at": obstacle.first_detected_at,
+                "last_confirmed_at": obstacle.last_confirmed_at,
+            },
+        )
+
+    def _check_exclusion_zones(self) -> None:
+        if not self.exclusion_polygons or self.rover is None:
+            return
+        estimate = self.position_fusion.current_estimate
+        position = (estimate.lon, estimate.lat)
+        intrusion = find_intruded_exclusion(position, self.exclusion_polygons)
+        if intrusion is None:
+            return
+        _exclusion, depth_m = intrusion
+        rover_length_m = self.rover.get("length_m")
+        if rover_length_m is None:
+            return
+        response = decide_exclusion_response(depth_m, rover_length_m)
+        if response == "wait_for_help":
+            self.mission_alert = "exclusion_wait_for_help"
