@@ -32,3 +32,25 @@ def test_error_radius_exceeded_stops_even_within_grace_period():
     )
 
     assert result == "stop_and_alert"
+
+
+def test_exactly_at_grace_period_boundary_stops():
+    result = decide_gps_loss_response(
+        seconds_since_last_fix=5.0,
+        current_error_radius_m=3.0,
+        grace_period_s=5.0,
+        max_error_radius_m=10.0,
+    )
+
+    assert result == "stop_and_alert"
+
+
+def test_exactly_at_error_radius_boundary_stops():
+    result = decide_gps_loss_response(
+        seconds_since_last_fix=1.0,
+        current_error_radius_m=10.0,
+        grace_period_s=5.0,
+        max_error_radius_m=10.0,
+    )
+
+    assert result == "stop_and_alert"

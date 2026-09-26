@@ -15,12 +15,13 @@ def decide_gps_loss_response(
     grace_period_s: float,
     max_error_radius_m: float,
 ) -> GpsLossResponse:
-    """Continue on dead reckoning until EITHER the grace period elapses
-    OR the error circle grows past a safe threshold, whichever comes
-    first -- then stop and alert.
+    """Continue on dead reckoning until EITHER the grace period is reached
+    OR the error circle reaches a safe threshold, whichever comes first --
+    then stop and alert. Boundary conditions are inclusive: hitting either
+    threshold exactly triggers stop_and_alert immediately.
     """
-    if seconds_since_last_fix > grace_period_s:
+    if seconds_since_last_fix >= grace_period_s:
         return "stop_and_alert"
-    if current_error_radius_m > max_error_radius_m:
+    if current_error_radius_m >= max_error_radius_m:
         return "stop_and_alert"
     return "continue_dead_reckoning"
