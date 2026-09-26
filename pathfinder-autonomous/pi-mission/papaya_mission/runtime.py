@@ -19,6 +19,12 @@ from papaya_mission.esp32_link import Esp32Link
 from papaya_mission.exclusion_check import find_intruded_exclusion
 from papaya_mission.exclusion_decision import decide_exclusion_response
 from papaya_mission.gps_loss_decision import decide_gps_loss_response
+from papaya_mission.local_store import (
+    DEFAULT_TELEMETRY_COMMIT_INTERVAL_S,
+    commit as local_store_commit,
+    save_telemetry_record,
+    should_commit_telemetry,
+)
 from papaya_mission.obstacle_detection import (
     obstacle_from_bump_contact,
     obstacle_from_ultrasonic_camera_detection,
@@ -27,14 +33,18 @@ from papaya_mission.position_fusion import GpsFix, PositionFusion
 from papaya_mission.resume_validation import reconcile_obstacles
 from papaya_mission.row_spacing import derive_row_spacing_m
 from papaya_mission.runtime_config import (
+    COMMAND_POLL_INTERVAL_S,
     GPS_LOSS_GRACE_PERIOD_S,
     GPS_LOSS_MAX_ERROR_RADIUS_M,
     SENSOR_DETECTION_WIDTH_M,
+    TELEMETRY_SAMPLE_INTERVAL_S,
 )
 from papaya_mission.sensor_hub import SensorHub
 from papaya_mission.sweep_session import SweepSession, SweepSessionStatus, Waypoint
+from papaya_mission.telemetry_record import build_telemetry_record
 
 RESUME_VALIDATION_MATCH_RADIUS_M = 3.0
+WAYPOINT_ARRIVAL_RADIUS_M = 1.0
 
 
 class MissionRuntime:
@@ -82,6 +92,15 @@ class MissionRuntime:
             for entry in self.rover.get("sensor_manifest", [])
             if entry.get("installed", True)
         }
+        # Arm the command-poll/telemetry-sample cadence from mission start,
+        # not from the __init__ sentinel of 0.0. time.monotonic()'s epoch is
+        # unspecified (e.g. system uptime) and routinely already far larger
+        # than COMMAND_POLL_INTERVAL_S/TELEMETRY_SAMPLE_INTERVAL_S, so leaving
+        # these at 0.0 would make the very first tick() call look infinitely
+        # overdue and fire an immediate, arbitrary-timing poll/sample before
+        # the loop has settled into its real cadence.
+        self._last_command_poll_monotonic = time.monotonic()
+        self._last_telemetry_sample_monotonic = time.monotonic()
         self._resume_in_progress_session_if_any()
 
     def _resume_in_progress_session_if_any(self) -> None:
@@ -221,6 +240,9 @@ class MissionRuntime:
         self._detect_obstacles()
         self._check_resume_validation_arrival()
         self._check_exclusion_zones()
+        self._check_waypoint_arrival()
+        self._sample_telemetry_if_due(now_monotonic)
+        self._poll_and_handle_commands_if_due(now_monotonic)
 
     def _read_position(self, now_monotonic: float) -> None:
         imu_reading = self.sensor_hub.imu.read()
@@ -445,3 +467,96 @@ class MissionRuntime:
         response = decide_exclusion_response(depth_m, rover_length_m)
         if response == "wait_for_help":
             self.mission_alert = "exclusion_wait_for_help"
+
+    def _check_waypoint_arrival(self) -> None:
+        if self.sweep_session is None or self.sweep_session.status != SweepSessionStatus.IN_PROGRESS:
+            return
+        remaining = self.sweep_session.remaining_waypoints
+        if not remaining:
+            return
+        next_waypoint = remaining[0]
+
+        from papaya_mission.geo_utils import flat_earth_distance_m
+        estimate = self.position_fusion.current_estimate
+        distance = flat_earth_distance_m((estimate.lon, estimate.lat), next_waypoint.position)
+        if distance <= WAYPOINT_ARRIVAL_RADIUS_M:
+            self.sweep_session.mark_waypoint_complete(next_waypoint.order)
+            self._save_sweep_session()
+
+    def _sample_telemetry_if_due(self, now_monotonic: float) -> None:
+        if now_monotonic - self._last_telemetry_sample_monotonic < TELEMETRY_SAMPLE_INTERVAL_S:
+            return
+        self._last_telemetry_sample_monotonic = now_monotonic
+        self._telemetry_sequence_number += 1
+
+        estimate = self.position_fusion.current_estimate if self.position_fusion else None
+        readings = {}
+        if estimate is not None:
+            readings["error_radius_m"] = estimate.error_radius_m
+            readings["heading_deg"] = estimate.heading_deg
+
+        record = build_telemetry_record(
+            record_id=str(uuid.uuid4()),
+            rover_id=self.rover_id,
+            timestamp=datetime.now(timezone.utc),
+            local_tz_offset_minutes=_local_tz_offset_minutes(),
+            sequence_number=self._telemetry_sequence_number,
+            readings=readings,
+            expected_metrics=self.expected_metrics,
+            sweep_session_id=self.sweep_session.id if self.sweep_session else None,
+        )
+        save_telemetry_record(self.conn, record)
+
+        now = datetime.now(timezone.utc)
+        if should_commit_telemetry(self._last_telemetry_commit_at, now, DEFAULT_TELEMETRY_COMMIT_INTERVAL_S):
+            local_store_commit(self.conn)
+            self._last_telemetry_commit_at = now
+
+    def _poll_and_handle_commands_if_due(self, now_monotonic: float) -> None:
+        if now_monotonic - self._last_command_poll_monotonic < COMMAND_POLL_INTERVAL_S:
+            return
+        self._last_command_poll_monotonic = now_monotonic
+
+        commands = backend_client.poll_commands(self.http_client, self.backend_base_url, self.rover_id)
+        for command in commands:
+            self._handle_command(command)
+            backend_client.ack_command(self.http_client, self.backend_base_url, command["_id"])
+
+    def _handle_command(self, command: dict[str, Any]) -> None:
+        command_type = command["type"]
+        if command_type == "pause_sweep":
+            if self.sweep_session is not None:
+                self.sweep_session.interrupt(datetime.now(timezone.utc))
+                self._save_sweep_session()
+        elif command_type == "resume_sweep":
+            self._handle_resume_sweep()
+        elif command_type in ("stop_sweep", "abort_home"):
+            if self.sweep_session is not None and self.sweep_session.status == SweepSessionStatus.IN_PROGRESS:
+                self.sweep_session.interrupt(datetime.now(timezone.utc))
+                self._save_sweep_session()
+        elif command_type == "update_geofence":
+            all_geofences = backend_client.list_geofences(self.http_client, self.backend_base_url)
+            self.exclusion_polygons = [
+                shape(g["boundary"]) for g in all_geofences if g["type"] == "exclusive"
+            ]
+
+    def _handle_resume_sweep(self) -> None:
+        status = self.esp32_link.status()
+        if status.halted_on_contact:
+            # A bump occurred while the link was down (or since the last
+            # check) -- treat it like any other bump event rather than
+            # blindly resuming movement. See design notes: Error handling.
+            obstacle = obstacle_from_bump_contact(
+                rover_position=self.position_fusion.current_estimate,
+                detected_at=datetime.now(timezone.utc),
+            )
+            self._save_obstacle(obstacle)
+            return
+        if self.sweep_session is not None and self.sweep_session.status == SweepSessionStatus.INTERRUPTED:
+            self.sweep_session.resume()
+            self._save_sweep_session()
+
+
+def _local_tz_offset_minutes() -> int:
+    offset = datetime.now().astimezone().utcoffset()
+    return int(offset.total_seconds() // 60) if offset is not None else 0
