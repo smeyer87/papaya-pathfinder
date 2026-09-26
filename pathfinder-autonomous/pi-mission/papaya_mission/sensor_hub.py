@@ -19,19 +19,46 @@ class ObstacleDetection:
     range_m: float
 
 
+# Contract note shared by all four source Protocols below: a real driver
+# SHOULD avoid raising from read() where possible -- return None (or, for
+# the IMU, the last known reading) rather than propagating a transient
+# bus error, since "no reading this tick" is a state every caller already
+# handles. MissionRuntime also defensively catches exceptions around every
+# one of these call sites as a second layer, so a driver that does raise
+# degrades that tick rather than crashing the mission. That catch is a
+# backstop, not a licence: a driver that raises routinely turns real
+# detections into silent misses, and only the log will say so.
+
+
 class GpsSource(Protocol):
+    """See the contract note above: SHOULD return None rather than raise on
+    a failed read; MissionRuntime catches regardless."""
+
     def read(self) -> GpsFix | None: ...
 
 
 class ImuSource(Protocol):
+    """See the contract note above. This one has no "no reading" return
+    value -- a real IMU always has a current attitude -- so a driver that
+    cannot read SHOULD return its last known reading. MissionRuntime skips
+    the whole position step for the tick if this raises, because there is
+    no safe substitute for a heading.
+    """
+
     def read(self) -> ImuReading: ...
 
 
 class UltrasonicSource(Protocol):
+    """See the contract note above: SHOULD return None rather than raise on
+    a failed read; MissionRuntime catches regardless."""
+
     def read(self) -> ObstacleDetection | None: ...
 
 
 class CameraSource(Protocol):
+    """See the contract note above: SHOULD return None rather than raise on
+    a failed read; MissionRuntime catches regardless."""
+
     def read(self) -> tuple[str, float] | None: ...
 
 

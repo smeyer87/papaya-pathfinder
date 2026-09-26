@@ -228,6 +228,71 @@ def test_exclusion_alert_clears_once_the_rover_leaves_the_zone(tmp_path):
     assert runtime.mission_alert is None
 
 
+class _RaisingSource:
+    """A sensor source whose read() always raises, standing in for a flaky
+    real driver. The Protocols ask drivers not to raise, but MissionRuntime
+    must not depend on that -- per the Global Constraint, a failure reading
+    one sensor must never stop the mission.
+    """
+
+    def __init__(self, message: str) -> None:
+        self._message = message
+
+    def read(self):
+        raise RuntimeError(self._message)
+
+
+def test_a_raising_gps_read_does_not_stop_the_tick(tmp_path):
+    hub = SimulatedSensorHub(INITIAL_IMU)
+    runtime = _make_started_runtime(tmp_path, sensor_hub=hub)
+    hub.gps = _RaisingSource("gps uart timeout")
+
+    runtime.tick()  # must not raise
+    runtime.tick()
+
+    # Position still tracked -- the IMU read succeeded, so dead reckoning
+    # continues exactly as it would during a normal GPS outage.
+    assert runtime.position_fusion is not None
+
+
+def test_a_raising_imu_read_skips_the_position_step_without_crashing(tmp_path):
+    hub = SimulatedSensorHub(INITIAL_IMU)
+    runtime = _make_started_runtime(tmp_path, sensor_hub=hub)
+    hub.imu = _RaisingSource("imu i2c nak")
+
+    runtime.tick()  # must not raise
+
+    # Nothing to seed from, so there is no estimate this tick -- but the tick
+    # itself completed, and every position-dependent step was skipped rather
+    # than dereferencing a None fusion.
+    assert runtime.position_fusion is None
+
+
+def test_raising_obstacle_sensors_and_bump_poll_do_not_stop_the_tick(tmp_path):
+    hub = SimulatedSensorHub(INITIAL_IMU)
+    runtime = _make_started_runtime(tmp_path, sensor_hub=hub)
+    hub.script_gps_fix(GpsFix(lat=38.05, lon=-85.0, accuracy_m=2.0, timestamp=0.0))
+    runtime.tick()  # seed position_fusion normally
+
+    hub.ultrasonic = _RaisingSource("ultrasonic echo timeout")
+    hub.camera = _RaisingSource("camera pipeline stalled")
+
+    def _boom():
+        raise RuntimeError("esp32 link dropped")
+
+    runtime.esp32_link.poll_bump_events = _boom
+    runtime.esp32_link.read_drive_status = _boom
+    runtime._last_telemetry_sample_monotonic = 0.0  # force a telemetry sample too
+
+    runtime.tick()  # must not raise
+
+    # Telemetry was still written, with the unreadable drive metrics tagged
+    # "missing" rather than the whole sample being lost.
+    metrics = local_store.list_unsynced_telemetry(runtime.conn)[-1]["metrics"]
+    assert metrics["throttle_position"] == "missing"
+    assert metrics["position"] != "missing"  # position was readable, so it is real
+
+
 RESUME_WAYPOINT_POSITION = (-85.0, 38.0)
 PRE_CRASH_DETECTED_AT = datetime(2026, 9, 25, 10, 2, 0, tzinfo=timezone.utc)
 

@@ -264,17 +264,51 @@ class MissionRuntime:
     def tick(self) -> None:
         now_monotonic = time.monotonic()
         self._read_position(now_monotonic)
-        self._check_gps_loss(now_monotonic)
-        self._detect_obstacles()
-        self._check_resume_validation_arrival()
-        self._check_exclusion_zones()
-        self._check_waypoint_arrival()
+        if self.position_fusion is not None:
+            # Every step in this block reads the fused position estimate. If
+            # this tick's position read failed outright (see _read_position's
+            # defensive wrapping), there is no estimate to reason about --
+            # skipping these is the graceful degradation, whereas letting them
+            # dereference a None fusion would turn one flaky sensor into a
+            # crashed mission. Telemetry and command polling stay outside the
+            # block on purpose: a rover that cannot fix its position is
+            # exactly when the ground most needs it observable and
+            # controllable.
+            self._check_gps_loss(now_monotonic)
+            self._detect_obstacles()
+            self._check_resume_validation_arrival()
+            self._check_exclusion_zones()
+            self._check_waypoint_arrival()
         self._sample_telemetry_if_due(now_monotonic)
         self._poll_and_handle_commands_if_due(now_monotonic)
 
     def _read_position(self, now_monotonic: float) -> None:
-        imu_reading = self.sensor_hub.imu.read()
-        gps_fix = self.sensor_hub.gps.read()
+        # Each hardware read is wrapped individually rather than the method as
+        # a whole, so one failing sensor degrades only its own contribution.
+        # The Protocols in sensor_hub.py ask real drivers not to raise, but
+        # that is a request, not an enforceable guarantee -- the Global
+        # Constraint ("a failure reading one sensor must never stop the
+        # mission") needs a second layer here that does not depend on every
+        # future driver honouring it.
+        try:
+            imu_reading = self.sensor_hub.imu.read()
+        except Exception:
+            # The IMU is the one read with no graceful partial outcome:
+            # seeding and dead reckoning both need a heading and a timestamp,
+            # and there is no safe substitute for either. Skip the whole
+            # position step for this tick -- 100ms of stale position is
+            # recoverable, a fabricated heading is not.
+            logger.warning("IMU read failed -- skipping the position step this tick", exc_info=True)
+            return
+        try:
+            gps_fix = self.sensor_hub.gps.read()
+        except Exception:
+            # Indistinguishable, by design, from an honest "no fix this tick":
+            # the dead-reckoning path and the GPS-loss safety clock already
+            # handle exactly this, growing the error circle and eventually
+            # raising gps_stop_and_alert if it persists.
+            logger.warning("GPS read failed -- treating this tick as no fix", exc_info=True)
+            gps_fix = None
 
         if self.position_fusion is None:
             seed_fix = gps_fix or GpsFix(lat=0.0, lon=0.0, accuracy_m=999.0, timestamp=imu_reading.timestamp)
@@ -328,8 +362,22 @@ class MissionRuntime:
             self.mission_alert = None
 
     def _detect_obstacles(self) -> None:
-        ultrasonic = self.sensor_hub.ultrasonic.read()
-        camera = self.sensor_hub.camera.read()
+        # Both reads fall back to None on failure, which the paired-detection
+        # branch below already treats as "nothing detected this tick" -- a
+        # missed detection is a real cost, but it is the same cost as the
+        # sensor honestly seeing nothing, and far cheaper than aborting the
+        # mission. A persistently failing sensor shows up as a repeating
+        # warning in the log.
+        try:
+            ultrasonic = self.sensor_hub.ultrasonic.read()
+        except Exception:
+            logger.warning("ultrasonic read failed -- no detection this tick", exc_info=True)
+            ultrasonic = None
+        try:
+            camera = self.sensor_hub.camera.read()
+        except Exception:
+            logger.warning("camera read failed -- no detection this tick", exc_info=True)
+            camera = None
         if ultrasonic is not None and camera is not None:
             classified_type, confidence = camera
             paired_obstacle = obstacle_from_ultrasonic_camera_detection(
@@ -359,7 +407,18 @@ class MissionRuntime:
         # independent of the ultrasonic+camera branch above (not folded
         # into one shared variable) so a bump event can never overwrite
         # or double-save a same-tick ultrasonic+camera detection.
-        for bump_event in self.esp32_link.poll_bump_events():
+        try:
+            bump_events = self.esp32_link.poll_bump_events()
+        except Exception:
+            # Losing the bump report is not losing the bump SAFETY: the ESP32
+            # cuts the drive train itself on contact, via a hardware
+            # interrupt, with no Pi round-trip (see esp32_link's module
+            # docstring). Only the durable record is missed here, and
+            # _handle_resume_sweep's halted_on_contact check catches a bump
+            # that happened while the link was down.
+            logger.warning("bump-event poll failed -- no bump records this tick", exc_info=True)
+            bump_events = []
+        for bump_event in bump_events:
             bump_obstacle = obstacle_from_bump_contact(
                 rover_position=self.position_fusion.current_estimate,
                 detected_at=bump_event.detected_at,
@@ -602,10 +661,20 @@ class MissionRuntime:
         # difference for a safety field.
         readings["mission_alert"] = self.mission_alert or "none"
 
-        drive_status = self.esp32_link.read_drive_status()
-        readings["throttle_position"] = drive_status.throttle_position
-        for servo_id, angle_deg in drive_status.servo_positions_deg.items():
-            readings[f"servo_{servo_id}_deg"] = angle_deg
+        try:
+            drive_status = self.esp32_link.read_drive_status()
+        except Exception:
+            # Substituting an empty DriveStatus rather than a neutral one:
+            # reporting throttle 0.0 when we simply could not read it would
+            # assert the rover is stopped, which is a claim we cannot make.
+            # Leaving the readings absent lets build_telemetry_record tag them
+            # with the "missing" sentinel, which is exactly what happened.
+            logger.warning("drive-status read failed -- reporting it as missing this sample", exc_info=True)
+            drive_status = None
+        if drive_status is not None:
+            readings["throttle_position"] = drive_status.throttle_position
+            for servo_id, angle_deg in drive_status.servo_positions_deg.items():
+                readings[f"servo_{servo_id}_deg"] = angle_deg
         # Per-servo keys are dynamic (`servo_{id}_deg`, from whatever ids the
         # ESP32 reported THIS tick), so they cannot be pre-enumerated in the
         # static MP1_EXPECTED_METRICS -- and build_telemetry_record drops any
@@ -613,7 +682,8 @@ class MissionRuntime:
         # instead of changing that function: its floor-and-ceiling contract is
         # already established and tested by two earlier plans.
         expected_metrics_this_sample = self.expected_metrics | {
-            f"servo_{servo_id}_deg" for servo_id in drive_status.servo_positions_deg
+            f"servo_{servo_id}_deg"
+            for servo_id in (drive_status.servo_positions_deg if drive_status else {})
         }
 
         record = build_telemetry_record(
@@ -706,16 +776,37 @@ class MissionRuntime:
             )
 
     def _handle_resume_sweep(self) -> None:
-        status = self.esp32_link.status()
+        try:
+            status = self.esp32_link.status()
+        except Exception:
+            # This check exists to catch a bump that happened while the link
+            # was down, so a link that is STILL failing is the very situation
+            # it guards against -- refuse the resume rather than assume
+            # not-halted and drive into whatever stopped us. The command is
+            # left unacked by the caller's guard only on a raise; here we
+            # return cleanly, so the session simply stays interrupted and
+            # ground control can retry once the link is healthy.
+            logger.warning("ESP32 status read failed -- refusing to resume the sweep", exc_info=True)
+            return
         if status.halted_on_contact:
             # A bump occurred while the link was down (or since the last
             # check) -- treat it like any other bump event rather than
             # blindly resuming movement. See design notes: Error handling.
-            obstacle = obstacle_from_bump_contact(
-                rover_position=self.position_fusion.current_estimate,
-                detected_at=datetime.now(timezone.utc),
-            )
-            self._save_obstacle(obstacle)
+            #
+            # With no position estimate (a failed IMU read this tick) there is
+            # nowhere to place the obstacle, so the record is skipped -- but
+            # the resume is still refused, which is the safety-relevant half.
+            if self.position_fusion is not None:
+                obstacle = obstacle_from_bump_contact(
+                    rover_position=self.position_fusion.current_estimate,
+                    detected_at=datetime.now(timezone.utc),
+                )
+                self._save_obstacle(obstacle)
+            else:
+                logger.warning(
+                    "ESP32 reports halted-on-contact but no position estimate is available "
+                    "-- refusing the resume without recording the obstacle"
+                )
             return
         if self.sweep_session is not None and self.sweep_session.status == SweepSessionStatus.INTERRUPTED:
             self.sweep_session.resume()
