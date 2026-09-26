@@ -40,9 +40,8 @@ genuinely new — deduplicating both against the database and within the
 batch itself, since a single sync call can otherwise contain the same
 `_id` more than once. A non-unique index on `_id`
 (`pathfinder-autonomous/backend/app/db.py`, `ensure_indexes()`) is
-permitted on time-series collections and keeps this existing-id check an
-index scan (`IXSCAN`) rather than a full collection scan (`COLLSCAN`) on
-every sync call.
+permitted on time-series collections and is created, but it is not on its
+own sufficient to keep that check cheap — see Consequences.
 
 This is judged safe for this project's actual architecture: exactly one
 Pi syncs its own telemetry, sequentially, retrying after a dropped
@@ -56,8 +55,26 @@ system.
   rather than database-enforced. A future architecture change introducing
   concurrent writers to the same telemetry `_id` (unlikely, but worth
   naming here) would need to revisit this decision.
-- The existing-id check adds one query per sync call, mitigated by the
-  non-unique `_id` index.
+- The existing-id check adds one query per sync call. The non-unique `_id`
+  index alone does **not** make that query cheap on a time-series
+  collection: a time-series index is built over each underlying *bucket's*
+  min/max range rather than over individual documents, and the
+  client-generated `_id`s are random UUIDs with no correlation to which
+  bucket a record landed in, so no bucket can ever be excluded by its
+  `_id` range. Measured against the live cluster: a bare
+  `{"_id": {"$in": [...50 ids...]}}` over 3000 records spread across 30
+  buckets examined all 30 buckets (1500 index keys).
+
+  The query is therefore scoped by the collection's own `metaField`
+  (`rover_id`) and a bound on its `timeField` (`timestamp`), both derived
+  from the incoming batch, alongside the `_id` `$in` clause. Those two
+  clauses *are* prunable, so Mongo's automatic `rover_id_1_timestamp_1`
+  index narrows the search to the buckets that could actually hold these
+  records. Same query re-measured with that scoping: 1 bucket, 2 index
+  keys, identical 50 matched documents. This is an internal query shape
+  only — no change to `sync_telemetry`'s signature or observable
+  behaviour — and it stays correct for a batch spanning several rovers,
+  because both clauses are computed from the batch rather than assumed.
 - If a future MongoDB server version adds unique-index support for
   time-series collections, the check-based approach could be simplified
   back to relying on a duplicate-key error — there is no urgency to do so.
