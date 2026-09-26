@@ -1928,6 +1928,86 @@ def test_waypoint_reached_marks_it_complete(tmp_path):
     runtime.tick()
 
     assert runtime.sweep_session.last_completed_waypoint_index == 0
+
+
+# Added post-review: the Global Constraints require that a failure
+# polling/acking commands never stops the mission. Two tests proving
+# that fault isolation, matching the httpx.MockTransport error-response
+# pattern already used above.
+def _handler_poll_fails(rover, geofences):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/rovers/rover-1":
+            return httpx.Response(200, json=rover)
+        if request.url.path == "/geofences":
+            return httpx.Response(200, json=geofences)
+        if request.url.path.startswith("/geofences/"):
+            fid = request.url.path.rsplit("/", 1)[-1]
+            return httpx.Response(200, json=next(g for g in geofences if g["_id"] == fid))
+        if request.url.path == "/commands/poll/rover-1":
+            return httpx.Response(500, text="backend unreachable")
+        raise AssertionError(request.url.path)
+
+    return handler
+
+
+def test_command_poll_failure_does_not_raise_and_leaves_state_untouched(tmp_path):
+    rover = {"_id": "rover-1", "name": "George", "length_m": 0.6, "turn_style": "spin_in_place"}
+    inclusive = {"_id": "fence-1", "type": "inclusive", "boundary": {"type": "Polygon", "coordinates": [FIELD_RING]}}
+    client = httpx.Client(transport=httpx.MockTransport(_handler_poll_fails(rover, [inclusive])))
+    hub = SimulatedSensorHub(INITIAL_IMU)
+    runtime = MissionRuntime(
+        rover_id="rover-1", backend_base_url="http://backend.local",
+        local_db_path=str(tmp_path / "test.db"), sensor_hub=hub, esp32_link=FakeEsp32Link(), http_client=client,
+    )
+    runtime.startup()
+    runtime.handle_start_sweep({"geofence_id": "fence-1"})
+    hub.script_gps_fix(GpsFix(lat=38.05, lon=-85.0, accuracy_m=2.0, timestamp=0.0))
+    runtime.tick()  # seed position_fusion
+    runtime._last_command_poll_monotonic = 0.0  # force a poll this tick
+
+    runtime.tick()  # poll_commands raises HTTPStatusError internally -- must not escape
+
+    assert runtime.sweep_session.status == SweepSessionStatus.IN_PROGRESS
+
+
+def _handler_ack_fails(rover, geofences, commands):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/rovers/rover-1":
+            return httpx.Response(200, json=rover)
+        if request.url.path == "/geofences":
+            return httpx.Response(200, json=geofences)
+        if request.url.path.startswith("/geofences/"):
+            fid = request.url.path.rsplit("/", 1)[-1]
+            return httpx.Response(200, json=next(g for g in geofences if g["_id"] == fid))
+        if request.url.path == "/commands/poll/rover-1":
+            pending, commands[:] = commands[:], []
+            return httpx.Response(200, json=pending)
+        if request.url.path.startswith("/commands/") and request.url.path.endswith("/ack"):
+            return httpx.Response(500, text="ack failed")
+        raise AssertionError(request.url.path)
+
+    return handler
+
+
+def test_ack_failure_does_not_prevent_command_effect_or_raise(tmp_path):
+    rover = {"_id": "rover-1", "name": "George", "length_m": 0.6, "turn_style": "spin_in_place"}
+    inclusive = {"_id": "fence-1", "type": "inclusive", "boundary": {"type": "Polygon", "coordinates": [FIELD_RING]}}
+    commands = [{"_id": "cmd-1", "type": "pause_sweep", "payload": {}}]
+    client = httpx.Client(transport=httpx.MockTransport(_handler_ack_fails(rover, [inclusive], commands)))
+    hub = SimulatedSensorHub(INITIAL_IMU)
+    runtime = MissionRuntime(
+        rover_id="rover-1", backend_base_url="http://backend.local",
+        local_db_path=str(tmp_path / "test.db"), sensor_hub=hub, esp32_link=FakeEsp32Link(), http_client=client,
+    )
+    runtime.startup()
+    runtime.handle_start_sweep({"geofence_id": "fence-1"})
+    hub.script_gps_fix(GpsFix(lat=38.05, lon=-85.0, accuracy_m=2.0, timestamp=0.0))
+    runtime.tick()  # seed position_fusion
+    runtime._last_command_poll_monotonic = 0.0  # force a poll this tick
+
+    runtime.tick()  # handles pause_sweep locally, then ack_command 500s -- must not raise
+
+    assert runtime.sweep_session.status == SweepSessionStatus.INTERRUPTED
 ```
 
 - [ ] **Step 2: Run the tests and verify they fail**
@@ -1950,6 +2030,12 @@ from papaya_mission.local_store import (
 )
 from papaya_mission.runtime_config import COMMAND_POLL_INTERVAL_S, TELEMETRY_SAMPLE_INTERVAL_S
 from papaya_mission.telemetry_record import build_telemetry_record
+
+# Also add near the top of the module, if not already present (the
+# Global Constraints' fault-isolation rule applies here: a failure
+# polling/acking commands must never stop the mission):
+import logging
+logger = logging.getLogger("papaya_mission.runtime")
 
 WAYPOINT_ARRIVAL_RADIUS_M = 1.0
 
@@ -2015,10 +2101,30 @@ WAYPOINT_ARRIVAL_RADIUS_M = 1.0
             return
         self._last_command_poll_monotonic = now_monotonic
 
-        commands = backend_client.poll_commands(self.http_client, self.backend_base_url, self.rover_id)
+        # Global Constraints: "a failure ... polling commands ... must
+        # never stop the mission -- log it, treat it as a momentary
+        # 'missing' reading for that tick, and continue." The cadence gate
+        # above already ran and updated the monotonic sentinel BEFORE this
+        # try block, so a failure here naturally retries next interval
+        # with no extra bookkeeping.
+        try:
+            commands = backend_client.poll_commands(self.http_client, self.backend_base_url, self.rover_id)
+        except httpx.HTTPError:
+            logger.warning("command poll failed -- will retry next interval", exc_info=True)
+            return
+
         for command in commands:
-            self._handle_command(command)
-            backend_client.ack_command(self.http_client, self.backend_base_url, command["_id"])
+            # Wrapped per-command, inside the loop: one command's ack
+            # failure must not prevent the rest of the batch from being
+            # handled this tick.
+            try:
+                self._handle_command(command)
+                backend_client.ack_command(self.http_client, self.backend_base_url, command["_id"])
+            except httpx.HTTPError:
+                logger.warning(
+                    "failed to handle/ack command %s -- will retry next poll",
+                    command.get("_id"), exc_info=True,
+                )
 
     def _handle_command(self, command: dict[str, Any]) -> None:
         command_type = command["type"]
@@ -2063,7 +2169,8 @@ def _local_tz_offset_minutes() -> int:
 - [ ] **Step 4: Run the tests and verify they pass**
 
 Run: `pytest tests/test_runtime_tick_commands.py -v`
-Expected: PASS (5 passed)
+Expected: PASS (7 passed -- 5 from the original TDD pass plus the two
+fault-isolation tests added post-review)
 
 - [ ] **Step 5: Run the full test suite for regressions**
 
@@ -2186,6 +2293,53 @@ def test_full_mission_lifecycle_end_to_end(tmp_path):
 
     assert runtime.sweep_session.status == SweepSessionStatus.INTERRUPTED
     assert sync_calls.count("/sync/sweep-sessions") == 1
+
+
+# Added post-review: proves the Home-return sync's fault isolation
+# (design spec's Error handling table: "Backend unreachable (command
+# poll, sync) -> Log, retry next interval. Never blocks the tick
+# loop."). The local interrupt and the sync attempt are independent --
+# a failed sync must not undo the local state change.
+def _handler_sync_fails(rover, geofences, commands):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/rovers/rover-1":
+            return httpx.Response(200, json=rover)
+        if request.url.path == "/geofences":
+            return httpx.Response(200, json=geofences)
+        if request.url.path.startswith("/geofences/"):
+            fid = request.url.path.rsplit("/", 1)[-1]
+            return httpx.Response(200, json=next(g for g in geofences if g["_id"] == fid))
+        if request.url.path == "/commands/poll/rover-1":
+            pending, commands[:] = commands[:], []
+            return httpx.Response(200, json=pending)
+        if request.url.path.startswith("/commands/") and request.url.path.endswith("/ack"):
+            return httpx.Response(200, json={"status": "acked"})
+        if request.url.path.startswith("/sync/"):
+            return httpx.Response(500, text="backend unreachable")
+        raise AssertionError(request.url.path)
+
+    return handler
+
+
+def test_home_return_sync_failure_does_not_raise_and_session_still_interrupted(tmp_path):
+    rover = {"_id": "rover-1", "name": "George", "length_m": 0.6, "turn_style": "spin_in_place"}
+    inclusive = {"_id": "fence-1", "type": "inclusive", "boundary": {"type": "Polygon", "coordinates": [FIELD_RING]}}
+    commands = [{"_id": "cmd-1", "type": "stop_sweep", "payload": {}}]
+    client = httpx.Client(transport=httpx.MockTransport(_handler_sync_fails(rover, [inclusive], commands)))
+    hub = SimulatedSensorHub(INITIAL_IMU)
+    runtime = MissionRuntime(
+        rover_id="rover-1", backend_base_url="http://backend.local",
+        local_db_path=str(tmp_path / "test.db"), sensor_hub=hub, esp32_link=FakeEsp32Link(), http_client=client,
+    )
+    runtime.startup()
+    runtime.handle_start_sweep({"geofence_id": "fence-1"})
+    hub.script_gps_fix(GpsFix(lat=38.001, lon=-85.0, accuracy_m=1.0, timestamp=0.0))
+    runtime.tick()  # seed position
+    runtime._last_command_poll_monotonic = 0.0
+
+    runtime.tick()  # polls and handles stop_sweep -> sync_all 500s internally -- must not raise
+
+    assert runtime.sweep_session.status == SweepSessionStatus.INTERRUPTED
 ```
 
 - [ ] **Step 2: Run the tests and verify they fail**
@@ -2209,7 +2363,18 @@ from papaya_mission import sync_client
 
 # Add this method to MissionRuntime:
     def _home_return_sync(self) -> None:
-        sync_client.sync_all(self.conn, self.http_client, self.backend_base_url)
+        # Design spec Error handling table: "Backend unreachable (command
+        # poll, sync) -> Log, retry next interval. Never blocks the tick
+        # loop." A failed sync leaves the records unsynced -- they are
+        # picked up again by the next Home-return sync or the next
+        # startup's resume path -- rather than crashing the process.
+        try:
+            sync_client.sync_all(self.conn, self.http_client, self.backend_base_url)
+        except httpx.HTTPError:
+            logger.warning(
+                "Home-return sync failed -- records remain unsynced for the next attempt",
+                exc_info=True,
+            )
 ```
 
 Also add the same `_home_return_sync()` call at the end of
@@ -2241,7 +2406,8 @@ an operator's `stop_sweep`/`abort_home`:
 - [ ] **Step 4: Run the tests and verify they pass**
 
 Run: `pytest tests/test_runtime_sync_and_integration.py -v`
-Expected: PASS (2 passed)
+Expected: PASS (3 passed -- 2 from the original TDD pass plus the
+Home-return sync fault-isolation test added post-review)
 
 - [ ] **Step 5: Write the CLI entrypoint**
 
