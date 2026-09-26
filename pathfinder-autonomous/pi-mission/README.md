@@ -70,3 +70,17 @@ heading before placing the obstacle.
   `leg_index` so leg boundaries survive; never flatten the legs yourself.
 - `exclusion_decision.py` — auto-reverse vs. wait-for-help.
 - `gps_loss_decision.py` — continue-on-dead-reckoning vs. stop-and-alert.
+- `local_store.py` — SQLite local store for obstacles/sweep-sessions/
+  telemetry. Obstacle/session saves commit immediately; telemetry saves
+  defer commit to the caller (`commit()`), batched per
+  `DEFAULT_TELEMETRY_COMMIT_INTERVAL_S` (currently 60s — change this one
+  constant, or pass a different `interval_s` to `should_commit_telemetry`,
+  if the SD-card-wear tradeoff ever needs revisiting; see the design
+  spec's resolved open items).
+- `telemetry_record.py` — `build_telemetry_record()`: the two-tier
+  telemetry record's missing-value tagging (present / `"missing"` /
+  omitted).
+- `sync_client.py` — pushes unsynced local-store records to the
+  backend's `/sync/*` endpoints at a Home-return checkpoint. Tests run
+  against `httpx.MockTransport`, not a live server -- no MongoDB or
+  running backend needed to build or test this module.
