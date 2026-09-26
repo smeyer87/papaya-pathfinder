@@ -32,6 +32,14 @@ def get_database(client: MongoClient = Depends(get_client)) -> Database:
     return client[db_name]
 
 
+def _ensure_telemetry_timeseries_collection(db: Database) -> None:
+    if "telemetry" not in db.list_collection_names():
+        db.create_collection(
+            "telemetry",
+            timeseries={"timeField": "timestamp", "metaField": "rover_id", "granularity": "seconds"},
+        )
+
+
 def ensure_indexes(db: Database) -> None:
     """Create/verify all indexes this service depends on.
 
@@ -47,3 +55,4 @@ def ensure_indexes(db: Database) -> None:
     db.commands.create_index([("rover_id", ASCENDING), ("status", ASCENDING)])
     db.sweep_sessions.create_index([("rover_id", ASCENDING)])
     db.obstacles.create_index([("position", "2dsphere")])
+    _ensure_telemetry_timeseries_collection(db)
