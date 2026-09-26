@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 import httpx
 
-from papaya_mission.esp32_link import Esp32Status, FakeEsp32Link
+from papaya_mission.esp32_link import DriveStatus, Esp32Status, FakeEsp32Link
 from papaya_mission.position_fusion import GpsFix, ImuReading
 from papaya_mission.runtime import MissionRuntime
 from papaya_mission.sensor_hub import SimulatedSensorHub
@@ -210,6 +210,72 @@ def test_telemetry_sampled_and_committed_on_schedule(tmp_path):
     unsynced = local_store.list_unsynced_telemetry(runtime.conn)
     assert len(unsynced) == 1
     assert unsynced[0]["rover_id"] == "rover-1"
+    assert unsynced[0]["metrics"]["error_radius_m"] == 2.0  # real value, not "missing"
+
+
+def test_telemetry_carries_real_position_nav_and_drive_content(tmp_path):
+    """Regression test: readings only ever held error_radius_m/heading_deg
+    while expected_metrics held only sensor-manifest NAMES ("gps"/"imu"/...),
+    so build_telemetry_record's floor-and-ceiling rule dropped every real
+    reading and stored an all-"missing" record. `position` -- the primary
+    live-summary metric in the design spec -- was never emitted at all.
+    """
+    commands, acked = [], []
+    runtime = _make_started_runtime(tmp_path, commands, acked)
+    runtime.esp32_link.script_drive_status(
+        DriveStatus(servo_positions_deg={"fl": 12.5}, throttle_position=0.3)
+    )
+    runtime._last_telemetry_sample_monotonic = 0.0
+    runtime._last_command_poll_monotonic = float("inf")
+
+    runtime.tick()
+
+    from papaya_mission import local_store
+    metrics = local_store.list_unsynced_telemetry(runtime.conn)[0]["metrics"]
+
+    estimate = runtime.position_fusion.current_estimate
+    # GeoJSON [lon, lat] order, matching every other coordinate pair here.
+    assert metrics["position"] == [estimate.lon, estimate.lat]
+    assert metrics["position_uncertainty_m"] == estimate.error_radius_m
+    assert metrics["error_radius_m"] == estimate.error_radius_m
+    assert metrics["heading_deg"] == estimate.heading_deg
+    assert metrics["nav_mode"] == "sweeping"
+    assert metrics["waypoint_index"] == runtime.sweep_session.last_completed_waypoint_index
+    # Dynamic per-servo keys survive: expected_metrics is extended with this
+    # tick's real servo ids so the floor-and-ceiling rule doesn't drop them.
+    assert metrics["servo_fl_deg"] == 12.5
+    assert metrics["throttle_position"] == 0.3
+
+
+def test_telemetry_nav_mode_is_idle_with_no_sweep_session(tmp_path):
+    commands, acked = [], []
+    runtime = _make_idle_runtime(tmp_path, commands, acked)
+    runtime._last_telemetry_sample_monotonic = 0.0
+    runtime._last_command_poll_monotonic = float("inf")
+
+    runtime.tick()
+
+    from papaya_mission import local_store
+    metrics = local_store.list_unsynced_telemetry(runtime.conn)[0]["metrics"]
+    assert metrics["nav_mode"] == "idle"
+    assert metrics["waypoint_index"] == -1
+
+
+def test_telemetry_nav_mode_is_interrupted_while_paused(tmp_path):
+    commands = [{"_id": "cmd-1", "type": "pause_sweep", "payload": {}}]
+    acked = []
+    runtime = _make_started_runtime(tmp_path, commands, acked)
+    runtime._last_command_poll_monotonic = 0.0
+    runtime.tick()  # handles pause_sweep
+    assert runtime.sweep_session.status == SweepSessionStatus.INTERRUPTED
+
+    runtime._last_telemetry_sample_monotonic = 0.0
+    runtime._last_command_poll_monotonic = float("inf")
+    runtime.tick()
+
+    from papaya_mission import local_store
+    metrics = local_store.list_unsynced_telemetry(runtime.conn)[-1]["metrics"]
+    assert metrics["nav_mode"] == "interrupted"
 
 
 def test_waypoint_reached_marks_it_complete(tmp_path):

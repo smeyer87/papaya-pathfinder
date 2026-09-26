@@ -4,6 +4,7 @@ import pytest
 from papaya_mission.esp32_link import FakeEsp32Link
 from papaya_mission.position_fusion import ImuReading
 from papaya_mission.runtime import MissionRuntime
+from papaya_mission.runtime_config import MP1_EXPECTED_METRICS
 from papaya_mission.sensor_hub import SimulatedSensorHub
 from papaya_mission.sweep_session import SweepSessionStatus
 
@@ -55,7 +56,13 @@ def test_startup_fetches_rover_and_builds_expected_metrics(tmp_path):
     runtime.startup()
 
     assert runtime.rover["_id"] == "rover-1"
-    assert runtime.expected_metrics == {"gps", "imu"}
+    # The manifest contributes installed physical sensors; MP1_EXPECTED_METRICS
+    # contributes the derived telemetry fields the manifest never lists. Both
+    # halves matter -- without the union, build_telemetry_record's
+    # floor-and-ceiling rule drops every real reading as unexpected.
+    assert runtime.expected_metrics == {"gps", "imu"} | MP1_EXPECTED_METRICS
+    assert "bump" not in runtime.expected_metrics  # not installed
+    assert "position" in runtime.expected_metrics
     assert runtime.sweep_session is None  # nothing in local storage yet
 
 

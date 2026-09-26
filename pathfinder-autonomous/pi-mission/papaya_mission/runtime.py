@@ -37,6 +37,7 @@ from papaya_mission.runtime_config import (
     COMMAND_POLL_INTERVAL_S,
     GPS_LOSS_GRACE_PERIOD_S,
     GPS_LOSS_MAX_ERROR_RADIUS_M,
+    MP1_EXPECTED_METRICS,
     SENSOR_DETECTION_WIDTH_M,
     TELEMETRY_SAMPLE_INTERVAL_S,
 )
@@ -90,11 +91,16 @@ class MissionRuntime:
 
     def startup(self) -> None:
         self.rover = backend_client.fetch_rover(self.http_client, self.backend_base_url, self.rover_id)
+        # The manifest lists physical sensors ("gps"/"imu"/"bump"); MP-1's
+        # derived telemetry fields (position, nav_mode, ...) are never in it,
+        # so the two sets are unioned. Without the union, expected_metrics
+        # held only sensor names, and build_telemetry_record's
+        # floor-and-ceiling rule dropped every real reading as unexpected.
         self.expected_metrics = {
             entry["sensor"]
             for entry in self.rover.get("sensor_manifest", [])
             if entry.get("installed", True)
-        }
+        } | MP1_EXPECTED_METRICS
         # Arm the command-poll/telemetry-sample cadence from mission start,
         # not from the __init__ sentinel of 0.0. time.monotonic()'s epoch is
         # unspecified (e.g. system uptime) and routinely already far larger
@@ -497,10 +503,45 @@ class MissionRuntime:
         self._telemetry_sequence_number += 1
 
         estimate = self.position_fusion.current_estimate if self.position_fusion else None
-        readings = {}
+        readings: dict[str, Any] = {}
         if estimate is not None:
+            # GeoJSON [lon, lat] order, matching every other coordinate pair
+            # in this codebase. as_lon_lat() rather than a hand-built tuple:
+            # a swapped pair still serialises fine and is just quietly wrong.
+            readings["position"] = list(estimate.as_lon_lat())
+            # Both names are reported: position_uncertainty_m is the metric
+            # name the backend/ground-control side uses for an obstacle's or
+            # a position's uncertainty, error_radius_m is the fusion layer's
+            # own name for the same number and is what existing telemetry
+            # consumers already read.
+            readings["position_uncertainty_m"] = estimate.error_radius_m
             readings["error_radius_m"] = estimate.error_radius_m
             readings["heading_deg"] = estimate.heading_deg
+        if self.sweep_session is None:
+            readings["nav_mode"] = "idle"
+        elif self.sweep_session.status == SweepSessionStatus.IN_PROGRESS:
+            readings["nav_mode"] = "sweeping"
+        else:
+            readings["nav_mode"] = "interrupted"
+        readings["waypoint_index"] = (
+            self.sweep_session.last_completed_waypoint_index
+            if self.sweep_session is not None
+            else -1
+        )
+
+        drive_status = self.esp32_link.read_drive_status()
+        readings["throttle_position"] = drive_status.throttle_position
+        for servo_id, angle_deg in drive_status.servo_positions_deg.items():
+            readings[f"servo_{servo_id}_deg"] = angle_deg
+        # Per-servo keys are dynamic (`servo_{id}_deg`, from whatever ids the
+        # ESP32 reported THIS tick), so they cannot be pre-enumerated in the
+        # static MP1_EXPECTED_METRICS -- and build_telemetry_record drops any
+        # reading outside the expected set. Extend the set for this one sample
+        # instead of changing that function: its floor-and-ceiling contract is
+        # already established and tested by two earlier plans.
+        expected_metrics_this_sample = self.expected_metrics | {
+            f"servo_{servo_id}_deg" for servo_id in drive_status.servo_positions_deg
+        }
 
         record = build_telemetry_record(
             record_id=str(uuid.uuid4()),
@@ -509,7 +550,7 @@ class MissionRuntime:
             local_tz_offset_minutes=_local_tz_offset_minutes(),
             sequence_number=self._telemetry_sequence_number,
             readings=readings,
-            expected_metrics=self.expected_metrics,
+            expected_metrics=expected_metrics_this_sample,
             sweep_session_id=self.sweep_session.id if self.sweep_session else None,
         )
         save_telemetry_record(self.conn, record)
