@@ -1,4 +1,9 @@
 from datetime import datetime, timezone
+from unittest.mock import patch
+
+import pytest
+from pymongo.collection import Collection
+from pymongo.errors import BulkWriteError
 
 from app.models.telemetry import TelemetryRecord
 from app.services import telemetry as telemetry_service
@@ -68,3 +73,29 @@ def test_sync_telemetry_deduplicates_within_the_same_batch(db):
 
     assert count == 1
     assert db.telemetry.count_documents({"_id": "dup-uuid"}) == 1
+
+
+def test_sync_telemetry_propagates_a_write_concern_failure(db):
+    """A write-concern-only BulkWriteError means the documents were NOT
+    durably written (e.g. an Atlas primary stepdown mid-insert). It must
+    propagate, not be reported as a successful sync.
+
+    Mocking is deliberate and confined to this one test: a real
+    write-concern error cannot be triggered on demand against a live
+    cluster, and the thing under test is the error PATH, not a query.
+    """
+    write_concern_failure = BulkWriteError(
+        {
+            "writeErrors": [],
+            "writeConcernErrors": [
+                {"code": 64, "errmsg": "waiting for replication timed out"}
+            ],
+            "nInserted": 0,
+        }
+    )
+
+    with patch.object(Collection, "insert_many", side_effect=write_concern_failure):
+        with pytest.raises(BulkWriteError):
+            telemetry_service.sync_telemetry(db, [_record()])
+
+    assert db.telemetry.count_documents({}) == 0
