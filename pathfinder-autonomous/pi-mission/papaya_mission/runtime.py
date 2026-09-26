@@ -129,14 +129,15 @@ class MissionRuntime:
             self._resume_validation_target = resume_waypoint.position
             # Snapshot the known obstacles ONCE, here, at the moment
             # resume-validation is armed -- the tick loop hasn't run yet, so
-            # nothing this pass detects can be in it. Re-querying the store
-            # at reconciliation time instead would be wrong: _detect_obstacles
-            # persists every fresh detection immediately (Task 7), so a live
-            # query would hand reconcile_obstacles each of this pass's own
-            # fresh detections as a "known" obstacle sitting 0m from itself.
-            # Its greedy nearest-first matching would then pair every fresh
-            # detection with its own just-written row, leaving the genuinely
-            # pre-existing obstacles unmatched and wrongly reported as
+            # nothing this pass detects can be in it. Re-querying the store at
+            # reconciliation time instead would be wrong: _detect_obstacles
+            # defers paired detections while a pass is armed (Task 7), but bump
+            # contacts still persist the moment they happen, at the rover's own
+            # position. A live query would hand reconcile_obstacles those bump
+            # rows as "known" obstacles sitting within metres of this pass's
+            # fresh detections, and its greedy nearest-first matching would pair
+            # a fresh detection with a row this same pass wrote, leaving the
+            # genuinely pre-existing obstacle unmatched and wrongly reported as
             # cleared/discrepancies -- precisely the failure resume-validation
             # exists to catch. (The alternative, tagging freshly inserted ids
             # and subtracting them later, needs bookkeeping in every
@@ -218,6 +219,7 @@ class MissionRuntime:
         self._read_position(now_monotonic)
         self._check_gps_loss(now_monotonic)
         self._detect_obstacles()
+        self._check_resume_validation_arrival()
         self._check_exclusion_zones()
 
     def _read_position(self, now_monotonic: float) -> None:
@@ -263,8 +265,20 @@ class MissionRuntime:
                 classification_confidence=confidence,
                 detected_at=datetime.now(timezone.utc),
             )
-            self._save_obstacle(paired_obstacle)
-            self._collect_for_resume_validation(paired_obstacle)
+            if self._resume_validation_target is not None:
+                # A resume pass is armed -- don't persist yet. Reconciliation
+                # (in _check_resume_validation_arrival) decides whether this is
+                # a re-detection (reuse the known obstacle's id, one row) or
+                # genuinely new (mint a fresh id, one row). Saving here too
+                # would create a SECOND row for a re-detection: the fresh-id
+                # row written now, plus the reused-id upsert written at
+                # reconciliation -- one physical obstacle, two records, both
+                # synced to the backend, and on the next resume pass the
+                # orphan fails to match and is reported as a bogus "vanished"
+                # discrepancy.
+                self._resume_validation_collected.append(paired_obstacle)
+            else:
+                self._save_obstacle(paired_obstacle)
 
         # Bump contacts are a separate, reactive obstacle source -- kept
         # independent of the ultrasonic+camera branch above (not folded
@@ -277,10 +291,20 @@ class MissionRuntime:
             )
             self._save_obstacle(bump_obstacle)
 
-    def _collect_for_resume_validation(self, obstacle) -> None:
+    def _check_resume_validation_arrival(self) -> None:
+        """Reconcile this resume pass's collected detections against the known
+        obstacles, once the rover is back at the resume-validation target.
+
+        A tick step in its own right, called unconditionally -- deliberately
+        NOT driven off a detection happening. Arriving at the target having
+        detected nothing is the single most important case resume validation
+        exists to report: it is what turns a pre-crash obstacle that is no
+        longer there into a `cleared`/`discrepancies` entry. Hanging this off
+        _detect_obstacles' paired-detection branch made that case unreachable,
+        because with nothing detected there was no call site to reach it from.
+        """
         if self._resume_validation_target is None:
             return
-        self._resume_validation_collected.append(obstacle)
 
         from papaya_mission.geo_utils import flat_earth_distance_m
 
@@ -293,14 +317,17 @@ class MissionRuntime:
         # The known set is the snapshot taken when resume-validation was armed
         # in _resume_in_progress_session_if_any (Task 6): the obstacles stored
         # BEFORE this resume pass began. It is deliberately not re-queried
-        # here. _detect_obstacles saves each fresh detection the moment it is
-        # made, several ticks before this reconciliation runs, so a live
-        # list_obstacles_for_session call would include this pass's own fresh
-        # detections in the known set -- and reconcile_obstacles matches
-        # greedily nearest-first, so each fresh detection would "confirm"
-        # its own just-written row at 0m and crowd out the pre-existing
-        # obstacle it should have been matched against. See the arming site
-        # for the full rationale.
+        # here. Paired detections made during an armed pass are deferred rather
+        # than saved, but bump contacts are NOT -- they are a reactive source
+        # outside reconciliation and still persist the moment they happen, at
+        # the rover's own position. A live list_obstacles_for_session call would
+        # therefore hand those bump rows to reconcile_obstacles as "known"
+        # obstacles, sitting within metres of this pass's fresh detections; its
+        # greedy nearest-first matching would let a bump row claim a fresh
+        # detection and crowd out the pre-existing obstacle that detection
+        # should have been matched against -- wrongly reporting a
+        # still-present obstacle as cleared. See the arming site for the full
+        # rationale.
         known_rows = self._resume_validation_known_rows
         # A position can legitimately carry more than one row -- two bump
         # contacts logged at the same position estimate, say -- so map each
@@ -334,11 +361,18 @@ class MissionRuntime:
             self._save_obstacle(
                 confirmed, obstacle_id=known_ids_by_position[confirmed.position].pop(0)
             )
-        # result.new_detections deliberately needs no save here: each fresh
-        # detection was already persisted with its own new id by
-        # _save_obstacle when _detect_obstacles first saw it this pass.
-        # Saving again would mint a second id and duplicate the row.
-        #
+        for new_obstacle in result.new_detections:
+            # This is where a genuinely-new obstacle detected during the resume
+            # pass finally gets persisted -- exactly once, with a fresh id
+            # (no obstacle_id, so _save_obstacle mints one).
+            #
+            # _detect_obstacles deferred it precisely so this decision could be
+            # made here: had it been saved on detection, a fresh row would
+            # already exist for every entry that reconciliation then classified
+            # as `confirmed`, on top of the reused-id upsert -- two rows per
+            # re-detected obstacle. Deferring means each collected detection is
+            # written once, under whichever id reconciliation says is correct.
+            self._save_obstacle(new_obstacle)
         # `cleared` and `discrepancies` are logged for operator review via
         # telemetry/obstacle status -- no further action in v1.
         self._resume_validation_target = None
