@@ -18,6 +18,7 @@ class ReconciliationResult:
     confirmed: list[Obstacle]
     cleared: list[Obstacle]
     discrepancies: list[Obstacle]
+    new_detections: list[Obstacle]
 
 
 def reconcile_obstacles(
@@ -26,26 +27,57 @@ def reconcile_obstacles(
     now: datetime,
     match_radius_m: float = 3.0,
 ) -> ReconciliationResult:
+    """Pair known obstacles against this pass's fresh detections.
+
+    Matching is greedy nearest-first and strictly one-to-one: every
+    (known, fresh) pair within `match_radius_m` is ranked by distance and
+    the closest pair claims each other, after which both drop out. That
+    one-to-one rule is the point -- letting a single fresh detection
+    confirm several known obstacles would quietly mark a missing obstacle
+    as still-there whenever a neighbour of it got re-detected, which is
+    exactly the discrepancy a resume pass exists to surface.
+
+    Bookkeeping is by list index, not by object identity or value:
+    `Obstacle` is a frozen dataclass, so two genuinely distinct obstacles
+    with identical fields compare and hash equal.
+    """
+    candidate_pairs: list[tuple[float, int, int]] = []
+    for known_index, known in enumerate(known_obstacles):
+        for fresh_index, fresh in enumerate(freshly_detected):
+            distance = flat_earth_distance_m(known.position, fresh.position)
+            if distance <= match_radius_m:
+                candidate_pairs.append((distance, known_index, fresh_index))
+    candidate_pairs.sort(key=lambda pair: pair[0])
+
+    matched_known: set[int] = set()
+    matched_fresh: set[int] = set()
+    for _distance, known_index, fresh_index in candidate_pairs:
+        if known_index in matched_known or fresh_index in matched_fresh:
+            continue
+        matched_known.add(known_index)
+        matched_fresh.add(fresh_index)
+
     confirmed: list[Obstacle] = []
     cleared: list[Obstacle] = []
     discrepancies: list[Obstacle] = []
 
-    for known in known_obstacles:
-        match = _find_nearby_match(known, freshly_detected, match_radius_m)
-        if match is not None:
+    for known_index, known in enumerate(known_obstacles):
+        if known_index in matched_known:
             confirmed.append(dataclasses.replace(known, last_confirmed_at=now))
         elif known.status == "temporary":
             cleared.append(known)
         else:
             discrepancies.append(known)
 
-    return ReconciliationResult(confirmed=confirmed, cleared=cleared, discrepancies=discrepancies)
+    new_detections = [
+        fresh
+        for fresh_index, fresh in enumerate(freshly_detected)
+        if fresh_index not in matched_fresh
+    ]
 
-
-def _find_nearby_match(
-    known: Obstacle, freshly_detected: list[Obstacle], match_radius_m: float
-) -> Obstacle | None:
-    for candidate in freshly_detected:
-        if flat_earth_distance_m(known.position, candidate.position) <= match_radius_m:
-            return candidate
-    return None
+    return ReconciliationResult(
+        confirmed=confirmed,
+        cleared=cleared,
+        discrepancies=discrepancies,
+        new_detections=new_detections,
+    )
