@@ -65,6 +65,8 @@ heading before placing the obstacle.
   width; validates it against the rover's chosen turn style
   (spin-in-place vs. graceful) and turn diameter.
 - `sweep_session.py` — the sweep-session state machine (start/
-  interrupt/resume/complete).
+  interrupt/resume/complete). Build one from a coverage pattern with
+  `SweepSession.from_legs(legs, ...)`, which tags each waypoint with its
+  `leg_index` so leg boundaries survive; never flatten the legs yourself.
 - `exclusion_decision.py` — auto-reverse vs. wait-for-help.
 - `gps_loss_decision.py` — continue-on-dead-reckoning vs. stop-and-alert.
