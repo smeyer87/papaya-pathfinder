@@ -55,3 +55,16 @@ def test_sync_telemetry_handles_empty_batch(db):
     count = telemetry_service.sync_telemetry(db, [])
 
     assert count == 0
+
+
+def test_sync_telemetry_deduplicates_within_the_same_batch(db):
+    count = telemetry_service.sync_telemetry(
+        db,
+        [
+            _record(record_id="dup-uuid"),
+            _record(record_id="dup-uuid", sequence_number=2),
+        ],
+    )
+
+    assert count == 1
+    assert db.telemetry.count_documents({"_id": "dup-uuid"}) == 1

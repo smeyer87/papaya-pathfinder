@@ -56,3 +56,4 @@ def ensure_indexes(db: Database) -> None:
     db.sweep_sessions.create_index([("rover_id", ASCENDING)])
     db.obstacles.create_index([("position", "2dsphere")])
     _ensure_telemetry_timeseries_collection(db)
+    db.telemetry.create_index([("_id", ASCENDING)])

@@ -31,7 +31,14 @@ def sync_telemetry(db: Database, records: list[TelemetryRecord]) -> int:
         existing["_id"]
         for existing in db.telemetry.find({"_id": {"$in": incoming_ids}}, {"_id": 1})
     }
-    new_docs = [doc for doc in docs if doc["_id"] not in already_synced_ids]
+    seen_ids: set = set()
+    new_docs = []
+    for doc in docs:
+        doc_id = doc["_id"]
+        if doc_id in already_synced_ids or doc_id in seen_ids:
+            continue
+        seen_ids.add(doc_id)
+        new_docs.append(doc)
     if not new_docs:
         return 0
 
