@@ -9,6 +9,13 @@ from app.models.geo import GeoPoint
 class SweepWaypoint(BaseModel):
     order: int
     position: GeoPoint
+    # Which contiguous leg of the sweep row this waypoint belongs to --
+    # exclusion-zone gaps split one row into several legs. Set on the Pi
+    # and carried through its local store and sync payload; without this
+    # field Pydantic's default extra="ignore" silently dropped it here.
+    # Defaults to 0 (one unsplit leg) for sessions synced before it
+    # existed.
+    leg_index: int = 0
 
 
 class SweepSession(BaseModel):
