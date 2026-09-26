@@ -86,6 +86,22 @@ def test_positional_construction_is_rejected():
         GpsFix(38.0, -85.0, 2.0, 0.0)
 
 
+def test_positional_tuning_args_are_rejected():
+    """initial_heading_deg was inserted between initial_fix and the
+    pre-existing drift_rate_m_per_s, so PositionFusion(fix, 0.3) silently
+    set heading instead of drift rate. Both are keyword-only now, matching
+    the kw_only treatment the dataclasses in this module already get.
+    """
+    fix = GpsFix(lat=38.0, lon=-85.0, accuracy_m=2.0, timestamp=0.0)
+
+    with pytest.raises(TypeError):
+        PositionFusion(fix, 0.3)
+
+    # initial_fix itself stays positional -- that is the calling convention
+    # every existing call site uses.
+    assert PositionFusion(fix).current_estimate.lat == 38.0
+
+
 def test_longitude_update_uses_the_pre_move_latitude():
     """The cos() term scaling the longitude delta must use the latitude the
     rover started the step at, not the one it just moved to. An oversized

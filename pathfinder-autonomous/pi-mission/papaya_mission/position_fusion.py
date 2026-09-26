@@ -61,9 +61,16 @@ class PositionEstimate:
 
 
 class PositionFusion:
+    # The two tuning parameters are keyword-only for the same reason the
+    # dataclasses above are kw_only: initial_heading_deg was added between
+    # initial_fix and the pre-existing drift_rate_m_per_s, so a positional
+    # `PositionFusion(fix, 0.3)` would silently have set a heading instead
+    # of a drift rate. initial_fix stays positional -- every call site
+    # already passes it that way and it cannot be confused with a float.
     def __init__(
         self,
         initial_fix: GpsFix,
+        *,
         initial_heading_deg: float = 0.0,
         drift_rate_m_per_s: float = 0.5,
     ):
