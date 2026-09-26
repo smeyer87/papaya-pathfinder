@@ -98,3 +98,49 @@ def test_full_mission_lifecycle_end_to_end(tmp_path):
 
     assert runtime.sweep_session.status == SweepSessionStatus.INTERRUPTED
     assert sync_calls.count("/sync/sweep-sessions") == 1
+
+
+def _handler_sync_fails(rover, geofences, commands):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/rovers/rover-1":
+            return httpx.Response(200, json=rover)
+        if request.url.path == "/geofences":
+            return httpx.Response(200, json=geofences)
+        if request.url.path.startswith("/geofences/"):
+            fid = request.url.path.rsplit("/", 1)[-1]
+            return httpx.Response(200, json=next(g for g in geofences if g["_id"] == fid))
+        if request.url.path == "/commands/poll/rover-1":
+            pending, commands[:] = commands[:], []
+            return httpx.Response(200, json=pending)
+        if request.url.path.startswith("/commands/") and request.url.path.endswith("/ack"):
+            return httpx.Response(200, json={"status": "acked"})
+        if request.url.path.startswith("/sync/"):
+            return httpx.Response(500, text="backend unreachable")
+        raise AssertionError(request.url.path)
+
+    return handler
+
+
+def test_home_return_sync_failure_does_not_raise_and_session_still_interrupted(tmp_path):
+    """The local interrupt (from stop_sweep) and the Home-return sync
+    attempt are independent: a failed sync must not raise out of tick(),
+    and must not undo the local state change -- the records simply stay
+    unsynced for a later attempt."""
+    rover = {"_id": "rover-1", "name": "George", "length_m": 0.6, "turn_style": "spin_in_place"}
+    inclusive = {"_id": "fence-1", "type": "inclusive", "boundary": {"type": "Polygon", "coordinates": [FIELD_RING]}}
+    commands = [{"_id": "cmd-1", "type": "stop_sweep", "payload": {}}]
+    client = httpx.Client(transport=httpx.MockTransport(_handler_sync_fails(rover, [inclusive], commands)))
+    hub = SimulatedSensorHub(INITIAL_IMU)
+    runtime = MissionRuntime(
+        rover_id="rover-1", backend_base_url="http://backend.local",
+        local_db_path=str(tmp_path / "test.db"), sensor_hub=hub, esp32_link=FakeEsp32Link(), http_client=client,
+    )
+    runtime.startup()
+    runtime.handle_start_sweep({"geofence_id": "fence-1"})
+    hub.script_gps_fix(GpsFix(lat=38.001, lon=-85.0, accuracy_m=1.0, timestamp=0.0))
+    runtime.tick()  # seed position
+    runtime._last_command_poll_monotonic = 0.0
+
+    runtime.tick()  # polls and handles stop_sweep -> sync_all 500s internally -- must not raise
+
+    assert runtime.sweep_session.status == SweepSessionStatus.INTERRUPTED

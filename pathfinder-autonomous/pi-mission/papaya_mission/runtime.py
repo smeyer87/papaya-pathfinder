@@ -5,6 +5,7 @@ and sync into one running process. Owns no business logic of its own
 """
 from __future__ import annotations
 
+import logging
 import time
 import uuid
 from datetime import datetime, timezone
@@ -45,6 +46,8 @@ from papaya_mission.telemetry_record import build_telemetry_record
 
 RESUME_VALIDATION_MATCH_RADIUS_M = 3.0
 WAYPOINT_ARRIVAL_RADIUS_M = 1.0
+
+logger = logging.getLogger("papaya_mission.runtime")
 
 
 class MissionRuntime:
@@ -521,10 +524,21 @@ class MissionRuntime:
             return
         self._last_command_poll_monotonic = now_monotonic
 
-        commands = backend_client.poll_commands(self.http_client, self.backend_base_url, self.rover_id)
+        try:
+            commands = backend_client.poll_commands(self.http_client, self.backend_base_url, self.rover_id)
+        except httpx.HTTPError:
+            logger.warning("command poll failed -- will retry next interval", exc_info=True)
+            return
+
         for command in commands:
-            self._handle_command(command)
-            backend_client.ack_command(self.http_client, self.backend_base_url, command["_id"])
+            try:
+                self._handle_command(command)
+                backend_client.ack_command(self.http_client, self.backend_base_url, command["_id"])
+            except httpx.HTTPError:
+                logger.warning(
+                    "failed to handle/ack command %s -- will retry next poll",
+                    command.get("_id"), exc_info=True,
+                )
 
     def _handle_command(self, command: dict[str, Any]) -> None:
         command_type = command["type"]
@@ -546,7 +560,13 @@ class MissionRuntime:
             ]
 
     def _home_return_sync(self) -> None:
-        sync_client.sync_all(self.conn, self.http_client, self.backend_base_url)
+        try:
+            sync_client.sync_all(self.conn, self.http_client, self.backend_base_url)
+        except httpx.HTTPError:
+            logger.warning(
+                "Home-return sync failed -- records remain unsynced for the next attempt",
+                exc_info=True,
+            )
 
     def _handle_resume_sweep(self) -> None:
         status = self.esp32_link.status()
