@@ -99,3 +99,37 @@ def test_complete_succeeds_once_fully_covered():
 
     assert session.status == SweepSessionStatus.COMPLETED
     assert session.completed_at == START
+
+
+def test_cannot_complete_a_session_that_is_already_completed():
+    session = _session(num_waypoints=1)
+    session.mark_waypoint_complete(0)
+    session.complete(at=START)
+
+    with pytest.raises(InvalidSweepSessionTransition):
+        session.complete(at=START)
+
+
+def test_cannot_complete_directly_from_interrupted_without_resuming():
+    session = _session(num_waypoints=1)
+    session.mark_waypoint_complete(0)
+    session.interrupt(at=START)
+
+    with pytest.raises(InvalidSweepSessionTransition):
+        session.complete(at=START)
+
+
+def test_non_contiguous_pattern_orders_are_rejected():
+    pattern = [
+        Waypoint(order=0, position=(-85.0, 38.0)),
+        Waypoint(order=2, position=(-85.0, 38.0)),
+    ]
+
+    with pytest.raises(ValueError):
+        SweepSession(
+            id="sess-1",
+            rover_id="rover-1",
+            geofence_id="fence-1",
+            pattern=pattern,
+            started_at=START,
+        )

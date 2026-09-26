@@ -4,7 +4,7 @@ capability. See design spec: Data Model -- Sweep session, Mission Flow.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 
@@ -36,6 +36,14 @@ class SweepSession:
     started_at: datetime | None = None
     interrupted_at: datetime | None = None
     completed_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        expected_orders = list(range(len(self.pattern)))
+        actual_orders = [wp.order for wp in self.pattern]
+        if actual_orders != expected_orders:
+            raise ValueError(
+                f"pattern must have contiguous waypoint orders starting at 0, got {actual_orders}"
+            )
 
     @property
     def remaining_waypoints(self) -> list[Waypoint]:
@@ -73,6 +81,10 @@ class SweepSession:
         self.interrupted_at = None
 
     def complete(self, at: datetime) -> None:
+        if self.status != SweepSessionStatus.IN_PROGRESS:
+            raise InvalidSweepSessionTransition(
+                f"cannot complete a session with status {self.status}"
+            )
         if not self.is_fully_covered:
             raise InvalidSweepSessionTransition("cannot mark complete -- waypoints remain")
         self.status = SweepSessionStatus.COMPLETED
