@@ -1,15 +1,24 @@
-# Papaya Pathfinder — Pi Mission (Position & Coverage Geometry)
+# Papaya Pathfinder — Pi Mission
 
-Pure geometry/algorithm layer for MP-1: GPS+IMU dead-reckoning position
-fusion with a growing error-circle, boustrophedon coverage-pattern
-generation, and exclusion-zone intrusion checks. See
+Pure geometry, obstacle-handling, and decision-logic layer for MP-1:
+GPS+IMU dead-reckoning position fusion with a growing error-circle,
+boustrophedon coverage-pattern generation, exclusion-zone intrusion
+checks, obstacle detection/classification, and the mission-flow
+decision logic (row spacing, sweep-session lifecycle, exclusion and
+GPS-loss responses) built on top of it. See
 `../../docs/superpowers/specs/2026-09-24-mp1-map-detect-explore-design.md`
 for the design this implements.
 
 No hardware I/O here -- `GpsFix`/`ImuReading` are plain data a later
 sensor-driver layer will produce from real hardware; this package only
-does the math. No persistence or orchestration either -- that's the
-mission-flow state machine plan that imports these modules.
+does the math. No persistence either -- `SweepSession` is a plain
+in-memory state object the caller drives and persists themselves. The
+actual runtime loop (waypoint navigation driving, command-queue
+polling, telemetry writes, Home-return sync triggering) is deferred to
+a not-yet-written Mission Runtime plan. Two of its three dependencies
+are now done -- Position & Coverage Geometry and Obstacle Detection &
+Classification -- leaving only the Pi Telemetry + Sync and backend
+command-channel plans still to exist as code.
 
 **Time handling:** `position_fusion.py`'s `timestamp` fields are
 monotonic seconds (e.g. `time.monotonic()`), used only for computing
@@ -52,3 +61,10 @@ heading before placing the obstacle.
 - `resume_validation.py` — `reconcile_obstacles(known, fresh, now)`:
   confirms, clears, or flags-as-discrepancy previously known obstacles
   during a resume pass.
+- `row_spacing.py` — derives coverage row spacing from sensor detection
+  width; validates it against the rover's chosen turn style
+  (spin-in-place vs. graceful) and turn diameter.
+- `sweep_session.py` — the sweep-session state machine (start/
+  interrupt/resume/complete).
+- `exclusion_decision.py` — auto-reverse vs. wait-for-help.
+- `gps_loss_decision.py` — continue-on-dead-reckoning vs. stop-and-alert.
