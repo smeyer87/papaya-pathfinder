@@ -853,18 +853,14 @@ class MissionRuntime:
             min_turn_diameter_m=min_turn_diameter_m,
         )
 
-        waypoint_positions = generate_coverage_pattern(
+        legs = generate_coverage_pattern(
             inclusive_polygon, self.exclusion_polygons, row_spacing_m
         )
-        pattern = [
-            Waypoint(order=i, position=pos) for i, pos in enumerate(waypoint_positions)
-        ]
-
-        self.sweep_session = SweepSession(
+        self.sweep_session = SweepSession.from_legs(
+            legs,
             id=str(uuid.uuid4()),
             rover_id=self.rover_id,
             geofence_id=geofence_id,
-            pattern=pattern,
             started_at=datetime.now(timezone.utc),
         )
         self._save_sweep_session()
@@ -879,7 +875,11 @@ class MissionRuntime:
                 "geofence_id": session.geofence_id,
                 "status": session.status.value,
                 "pattern": [
-                    {"order": wp.order, "position": {"type": "Point", "coordinates": list(wp.position)}}
+                    {
+                        "order": wp.order,
+                        "position": {"type": "Point", "coordinates": list(wp.position)},
+                        "leg_index": wp.leg_index,
+                    }
                     for wp in session.pattern
                 ],
                 "last_completed_waypoint_index": session.last_completed_waypoint_index,
@@ -1064,7 +1064,11 @@ from papaya_mission.sweep_session import SweepSession, SweepSessionStatus, Waypo
         session_dict = candidates[0]
 
         pattern = [
-            Waypoint(order=wp["order"], position=tuple(wp["position"]["coordinates"]))
+            Waypoint(
+                order=wp["order"],
+                position=tuple(wp["position"]["coordinates"]),
+                leg_index=wp.get("leg_index", 0),
+            )
             for wp in session_dict["pattern"]
         ]
         self.sweep_session = SweepSession(
