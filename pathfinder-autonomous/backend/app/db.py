@@ -46,3 +46,4 @@ def ensure_indexes(db: Database) -> None:
     db.geofences.create_index([("boundary", "2dsphere")])
     db.commands.create_index([("rover_id", ASCENDING), ("status", ASCENDING)])
     db.sweep_sessions.create_index([("rover_id", ASCENDING)])
+    db.obstacles.create_index([("position", "2dsphere")])
