@@ -459,6 +459,57 @@ def test_confirmed_redetection_during_resume_pass_saves_exactly_one_row(tmp_path
     assert len(local_store.list_unsynced_obstacles(runtime.conn)) == 1
 
 
+def test_two_known_obstacles_at_one_position_keep_separate_identities(tmp_path):
+    """The resume-validation id lookup keys rows by
+    (position, type, detection_method, first_detected_at), not position alone,
+    so two obstacles at a bit-identical position -- a bump contact and an
+    ultrasonic detection logged at the same stationary rover position -- cannot
+    have their ids conflated when only one of them is confirmed.
+
+    Characterization test, not a red-then-green regression test: with the key
+    and the lookup both derived from the same ordered row list, the old
+    position-only key happened to agree, so this passes before and after. It
+    locks in the invariant the tuple key makes structural instead of
+    incidental -- exactly one row refreshed, the other untouched, and no
+    duplicate row minted.
+    """
+    hub = SimulatedSensorHub(INITIAL_IMU)
+    bump_twin = _known_obstacle("obs-bump", RESUME_WAYPOINT_POSITION) | {
+        "id": "obs-bump",
+        "type": "unknown",
+        "detection_method": "contact-only",
+        "classification_confidence": 0.0,
+        "first_detected_at": datetime(2026, 9, 25, 10, 3, 0, tzinfo=timezone.utc),
+    }
+    runtime = _make_resumed_runtime(
+        tmp_path,
+        hub,
+        [_known_obstacle("obs-paired", RESUME_WAYPOINT_POSITION), bump_twin],
+    )
+    assert len(runtime._resume_validation_known_rows) == 2
+
+    # Arrive at the resume target and re-detect ONE obstacle at that position.
+    hub.script_gps_fix(GpsFix(lat=38.0, lon=-85.0, accuracy_m=2.0, timestamp=0.0))
+    hub.script_ultrasonic(ObstacleDetection(relative_bearing_deg=0.0, range_m=0.0))
+    hub.script_camera(("barrel", 0.9))
+    runtime.tick()
+
+    rows = local_store.list_obstacles_for_session(runtime.conn, "sess-1")
+    # No third row minted: the re-detection reused one of the two known ids.
+    assert sorted(r["id"] for r in rows) == ["obs-bump", "obs-paired"]
+    # Exactly one row refreshed -- the id lookup consumed one id, not both and
+    # not the same one twice.
+    refreshed = [r["id"] for r in rows if r["last_confirmed_at"] is not None]
+    assert len(refreshed) == 1
+    # Whichever row was confirmed, the OTHER one's distinguishing fields are
+    # intact -- an upsert under a conflated id would have overwritten them.
+    by_id = {r["id"]: r for r in rows}
+    assert by_id["obs-bump"]["detection_method"] == "contact-only"
+    assert by_id["obs-bump"]["first_detected_at"] == datetime(2026, 9, 25, 10, 3, 0, tzinfo=timezone.utc)
+    assert by_id["obs-paired"]["detection_method"] == "ultrasonic+camera"
+    assert by_id["obs-paired"]["first_detected_at"] == PRE_CRASH_DETECTED_AT
+
+
 def test_resume_validation_reconciles_on_arrival_even_with_no_detection(tmp_path):
     """Reconciliation is its own tick step, not a side effect of a paired
     detection. Arriving at the resume target having detected NOTHING must still

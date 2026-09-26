@@ -443,7 +443,7 @@ class MissionRuntime:
         from papaya_mission.geo_utils import flat_earth_distance_m
 
         estimate = self.position_fusion.current_estimate
-        current_position = (estimate.lon, estimate.lat)
+        current_position = estimate.as_lon_lat()
         distance_to_target = flat_earth_distance_m(current_position, self._resume_validation_target)
         if distance_to_target > RESUME_VALIDATION_MATCH_RADIUS_M:
             return  # still transiting back -- keep collecting, reconcile on arrival
@@ -465,14 +465,20 @@ class MissionRuntime:
         known_rows = self._resume_validation_known_rows
         # A position can legitimately carry more than one row -- two bump
         # contacts logged at the same position estimate, say -- so map each
-        # position to the list of ids stored there and let each confirmed
-        # entry consume one. A flat position->id dict would collapse those
-        # rows onto a single id, refreshing one row twice while leaving the
-        # other stale: the same duplicate-row failure this id lookup exists
-        # to prevent.
-        known_ids_by_position: dict[tuple[float, float], list[str]] = {}
+        # key to the list of ids stored under it and let each confirmed entry
+        # consume one. A flat key->id dict would collapse those rows onto a
+        # single id, refreshing one row twice while leaving the other stale:
+        # the same duplicate-row failure this id lookup exists to prevent.
+        #
+        # The key is deliberately more than position. Keying on position alone
+        # conflated two obstacles at a bit-identical position (a bump contact
+        # and an ultrasonic detection logged at the same stationary rover
+        # position, say), so with only one of them confirmed, .pop(0) could
+        # hand back the other row's id and refresh the wrong record. Adding
+        # type/detection_method/first_detected_at distinguishes them.
+        known_ids_by_key: dict[tuple[Any, ...], list[str]] = {}
         for row in known_rows:
-            known_ids_by_position.setdefault(row["position"], []).append(row["id"])
+            known_ids_by_key.setdefault(self._known_row_id_key(row), []).append(row["id"])
         known = [self._obstacle_dict_to_domain(row) for row in known_rows]
         result = reconcile_obstacles(
             known_obstacles=known,
@@ -489,11 +495,13 @@ class MissionRuntime:
             #
             # reconcile_obstacles builds each confirmed entry as
             # dataclasses.replace(known, last_confirmed_at=now), which changes
-            # only that one field -- so the entry's position is identical to
-            # the known obstacle it came from and is a safe key back to that
-            # obstacle's stored id.
+            # only that one field -- so every field the key is built from is
+            # identical to the known obstacle it came from, making it a safe
+            # key back to that obstacle's stored id. (last_confirmed_at, the
+            # one field that DOES change, is deliberately not in the key.)
             self._save_obstacle(
-                confirmed, obstacle_id=known_ids_by_position[confirmed.position].pop(0)
+                confirmed,
+                obstacle_id=known_ids_by_key[self._known_obstacle_id_key(confirmed)].pop(0),
             )
         for new_obstacle in result.new_detections:
             # This is where a genuinely-new obstacle detected during the resume
@@ -512,6 +520,35 @@ class MissionRuntime:
         self._resume_validation_target = None
         self._resume_validation_collected = []
         self._resume_validation_known_rows = []
+
+    # The two id-key builders below exist as a pair on purpose: one side of
+    # the lookup is a raw local_store row (a dict), the other is an Obstacle
+    # domain object, and both must compute a byte-identical key or a confirmed
+    # re-detection silently fails to find the id of the row it belongs to.
+    # They funnel into one _id_key so the field list cannot drift apart.
+
+    @staticmethod
+    def _id_key(
+        position, obstacle_type, detection_method, first_detected_at
+    ) -> tuple[Any, ...]:
+        # tuple() on position because the row and the domain object can hold a
+        # tuple or a list for the same coordinates, which would not hash alike.
+        return (tuple(position), obstacle_type, detection_method, first_detected_at)
+
+    @classmethod
+    def _known_row_id_key(cls, row: dict[str, Any]) -> tuple[Any, ...]:
+        return cls._id_key(
+            row["position"], row["type"], row["detection_method"], row["first_detected_at"]
+        )
+
+    @classmethod
+    def _known_obstacle_id_key(cls, obstacle) -> tuple[Any, ...]:
+        return cls._id_key(
+            obstacle.position,
+            obstacle.type,
+            obstacle.detection_method,
+            obstacle.first_detected_at,
+        )
 
     @staticmethod
     def _obstacle_dict_to_domain(obstacle_dict: dict[str, Any]):
@@ -614,7 +651,7 @@ class MissionRuntime:
 
         from papaya_mission.geo_utils import flat_earth_distance_m
         estimate = self.position_fusion.current_estimate
-        distance = flat_earth_distance_m((estimate.lon, estimate.lat), next_waypoint.position)
+        distance = flat_earth_distance_m(estimate.as_lon_lat(), next_waypoint.position)
         if distance <= WAYPOINT_ARRIVAL_RADIUS_M:
             self.sweep_session.mark_waypoint_complete(next_waypoint.order)
             self._save_sweep_session()
