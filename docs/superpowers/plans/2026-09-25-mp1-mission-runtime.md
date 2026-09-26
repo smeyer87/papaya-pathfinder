@@ -824,6 +824,10 @@ class MissionRuntime:
         self._telemetry_sequence_number = 0
         self._resume_validation_target: tuple[float, float] | None = None
         self._resume_validation_collected: list[Any] = []
+        # Raw local_store rows for the obstacles that were already stored
+        # when a resume pass was armed. Snapshotted, not queried live -- see
+        # _resume_in_progress_session_if_any (Task 6) for why.
+        self._resume_validation_known_rows: list[dict[str, Any]] = []
 
     def startup(self) -> None:
         self.rover = backend_client.fetch_rover(self.http_client, self.backend_base_url, self.rover_id)
@@ -911,8 +915,8 @@ git commit -m "feat(pi-mission): add MissionRuntime startup and start_sweep hand
 - Test: `pathfinder-autonomous/pi-mission/tests/test_runtime_resume.py`
 
 **Interfaces:**
-- Consumes: Task 5's `MissionRuntime`, `papaya_mission.sweep_session.{SweepSession, SweepSessionStatus, Waypoint}`, `papaya_mission.local_store.list_unsynced_sweep_sessions` (a sweep session stays "unsynced" until Home-return sync, so any interrupted/in-progress one not yet synced is exactly the auto-resume candidate).
-- Produces: extends `.startup()` — if local storage has a `SweepSession` with `status in ("in_progress", "interrupted")`, rebuild it in memory, re-fetch its geofences (rebuilding `.exclusion_polygons`), transition it to `IN_PROGRESS` via `.resume()` if it was `INTERRUPTED`, and arm resume-validation: `._resume_validation_target` is set to the position of the waypoint at `last_completed_waypoint_index` (or `None` if that's -1, meaning nothing to re-scan toward), and `._resume_validation_collected` starts empty. Task 7's tick loop drains `._resume_validation_collected` and calls `resume_validation.reconcile_obstacles` once the rover's position comes within a fixed threshold of `._resume_validation_target`.
+- Consumes: Task 5's `MissionRuntime`, `papaya_mission.sweep_session.{SweepSession, SweepSessionStatus, Waypoint}`, `papaya_mission.local_store.list_unsynced_sweep_sessions` (a sweep session stays "unsynced" until Home-return sync, so any interrupted/in-progress one not yet synced is exactly the auto-resume candidate), `papaya_mission.local_store.list_obstacles_for_session`.
+- Produces: extends `.startup()` — if local storage has a `SweepSession` with `status in ("in_progress", "interrupted")`, rebuild it in memory, re-fetch its geofences (rebuilding `.exclusion_polygons`), transition it to `IN_PROGRESS` via `.resume()` if it was `INTERRUPTED`, and arm resume-validation: `._resume_validation_target` is set to the position of the waypoint at `last_completed_waypoint_index` (or `None` if that's -1, meaning nothing to re-scan toward), `._resume_validation_collected` starts empty, and `._resume_validation_known_rows` is snapshotted from `local_store.list_obstacles_for_session` — the obstacles already stored for this session at the moment of arming, i.e. everything detected *before* the resume pass. Task 7's tick loop drains `._resume_validation_collected` and reconciles it against that snapshot via `resume_validation.reconcile_obstacles` once the rover's position comes within a fixed threshold of `._resume_validation_target`.
 
 **Design note on why resume-validation isn't a single blocking call:** the design spec says the rover "passively re-scans obstacles it passes" while transiting back to the resume point — that's inherently a multi-tick process (the rover has to physically drive there), not something `startup()` can do synchronously. This task only arms the target; Task 7 does the actual reconciliation once the rover arrives.
 
@@ -995,6 +999,21 @@ def test_startup_auto_resumes_interrupted_session(tmp_path):
             "completed_at": None,
         },
     )
+    local_store.save_obstacle(
+        runtime.conn,
+        {
+            "id": "obs-pre-crash",
+            "sweep_session_id": "sess-1",
+            "position": (-85.0, 38.0),
+            "position_uncertainty_m": 1.5,
+            "type": "barrel",
+            "classification_confidence": 0.9,
+            "detection_method": "ultrasonic+camera",
+            "status": "permanent-pending",
+            "first_detected_at": datetime(2026, 9, 25, 10, 2, 0, tzinfo=timezone.utc),
+            "last_confirmed_at": None,
+        },
+    )
     local_store.commit(runtime.conn)
 
     runtime.startup()
@@ -1005,6 +1024,9 @@ def test_startup_auto_resumes_interrupted_session(tmp_path):
     assert runtime.sweep_session.last_completed_waypoint_index == 0
     assert runtime._resume_validation_target == (-85.0, 38.0)  # waypoint order 0's position
     assert runtime._resume_validation_collected == []
+    # The known-obstacle set is snapshotted at arm time, so it holds exactly
+    # the pre-crash rows -- nothing this resume pass goes on to detect.
+    assert [row["id"] for row in runtime._resume_validation_known_rows] == ["obs-pre-crash"]
 
 
 def test_startup_does_not_resume_a_completed_but_unsynced_session(tmp_path):
@@ -1088,13 +1110,42 @@ from papaya_mission.sweep_session import SweepSession, SweepSessionStatus, Waypo
             shape(g["boundary"]) for g in all_geofences if g["type"] == "exclusive"
         ]
 
+        self._resume_validation_collected = []
+        self._resume_validation_known_rows = []
         if self.sweep_session.last_completed_waypoint_index >= 0:
             resume_waypoint = next(
                 wp for wp in self.sweep_session.pattern
                 if wp.order == self.sweep_session.last_completed_waypoint_index
             )
             self._resume_validation_target = resume_waypoint.position
-        self._resume_validation_collected = []
+            # Snapshot the known obstacles ONCE, here, at the moment
+            # resume-validation is armed -- the tick loop hasn't run yet, so
+            # nothing this pass detects can be in it. Re-querying the store
+            # at reconciliation time instead would be wrong: _detect_obstacles
+            # persists every fresh detection immediately (Task 7), so a live
+            # query would hand reconcile_obstacles each of this pass's own
+            # fresh detections as a "known" obstacle sitting 0m from itself.
+            # Its greedy nearest-first matching would then pair every fresh
+            # detection with its own just-written row, leaving the genuinely
+            # pre-existing obstacles unmatched and wrongly reported as
+            # cleared/discrepancies -- precisely the failure resume-validation
+            # exists to catch. (The alternative, tagging freshly inserted ids
+            # and subtracting them later, needs bookkeeping in every
+            # _save_obstacle caller for the same result; the snapshot is a
+            # single call at the one moment the boundary is unambiguous.)
+            #
+            # list_obstacles_for_session, not list_unsynced_obstacles: a
+            # Home-return sync during the interrupted pass marks obstacles
+            # synced, and an unsynced-only filter would drop them from the
+            # known set, so reconciliation would treat each one as never-seen.
+            #
+            # Raw store rows, not domain objects: Obstacle has no id field
+            # (ids are a persistence concern owned by local_store), so the row
+            # is the only place an existing obstacle's id lives -- and a
+            # confirmed re-detection has to be saved back under that id.
+            self._resume_validation_known_rows = local_store.list_obstacles_for_session(
+                self.conn, self.sweep_session.id
+            )
 
         if self.sweep_session.status == SweepSessionStatus.INTERRUPTED:
             self.sweep_session.resume()
@@ -1127,7 +1178,7 @@ git commit -m "feat(pi-mission): auto-resume in-progress sweep session on restar
 - Test: `pathfinder-autonomous/pi-mission/tests/test_runtime_tick_sensing.py`
 
 **Interfaces:**
-- Consumes: `papaya_mission.position_fusion.{GpsFix, ImuReading, PositionEstimate, PositionFusion}`, `papaya_mission.gps_loss_decision.decide_gps_loss_response`, `papaya_mission.exclusion_check.find_intruded_exclusion`, `papaya_mission.exclusion_decision.decide_exclusion_response`, `papaya_mission.obstacle_detection.{obstacle_from_ultrasonic_camera_detection, obstacle_from_bump_contact}`, `papaya_mission.classification.classify_permanence` (called internally by `obstacle_from_ultrasonic_camera_detection`, not directly here), `papaya_mission.resume_validation.reconcile_obstacles`, `papaya_mission.local_store.{save_obstacle, list_obstacles_for_session}`, `papaya_mission.runtime_config.{GPS_LOSS_GRACE_PERIOD_S, GPS_LOSS_MAX_ERROR_RADIUS_M}`.
+- Consumes: `papaya_mission.position_fusion.{GpsFix, ImuReading, PositionEstimate, PositionFusion}`, `papaya_mission.gps_loss_decision.decide_gps_loss_response`, `papaya_mission.exclusion_check.find_intruded_exclusion`, `papaya_mission.exclusion_decision.decide_exclusion_response`, `papaya_mission.obstacle_detection.{obstacle_from_ultrasonic_camera_detection, obstacle_from_bump_contact}`, `papaya_mission.classification.classify_permanence` (called internally by `obstacle_from_ultrasonic_camera_detection`, not directly here), `papaya_mission.resume_validation.reconcile_obstacles`, `papaya_mission.local_store.save_obstacle` (the known-obstacle set reconciliation runs against was snapshotted into `._resume_validation_known_rows` back in Task 6, so this task issues no fresh `list_obstacles_for_session` query), `papaya_mission.runtime_config.{GPS_LOSS_GRACE_PERIOD_S, GPS_LOSS_MAX_ERROR_RADIUS_M}`.
 - Produces: `.tick() -> None` — one iteration of the sensing/position/obstacle/exclusion sequence (command handling and telemetry are Task 8). Also produces `.mission_alert: str | None` — set to `"gps_stop_and_alert"` or `"exclusion_wait_for_help"` when either decision function returns its stop branch; the tick loop checks this and Task 8's command handling clears it on an operator response. A resume-validation match distance of 3.0m (matching `resume_validation.reconcile_obstacles`'s own default `match_radius_m`) is used to decide the rover has "arrived" at `._resume_validation_target`.
 
 - [ ] **Step 1: Write the failing tests**
@@ -1362,53 +1413,63 @@ RESUME_VALIDATION_MATCH_RADIUS_M = 3.0
         estimate = self.position_fusion.current_estimate
         current_position = (estimate.lon, estimate.lat)
         distance_to_target = flat_earth_distance_m(current_position, self._resume_validation_target)
+        if distance_to_target > RESUME_VALIDATION_MATCH_RADIUS_M:
+            return  # still transiting back -- keep collecting, reconcile on arrival
 
-        if distance_to_target <= RESUME_VALIDATION_MATCH_RADIUS_M:
-            # Every obstacle known for this session, synced or not. The old
-            # list_unsynced_obstacles filter was wrong here: a Home-return
-            # sync during the interrupted pass marks obstacles synced, and
-            # they would then vanish from the known set, so reconciliation
-            # would treat each one as never-seen.
+        # The known set is the snapshot taken when resume-validation was armed
+        # in _resume_in_progress_session_if_any (Task 6): the obstacles stored
+        # BEFORE this resume pass began. It is deliberately not re-queried
+        # here. _detect_obstacles saves each fresh detection the moment it is
+        # made, several ticks before this reconciliation runs, so a live
+        # list_obstacles_for_session call would include this pass's own fresh
+        # detections in the known set -- and reconcile_obstacles matches
+        # greedily nearest-first, so each fresh detection would "confirm"
+        # its own just-written row at 0m and crowd out the pre-existing
+        # obstacle it should have been matched against. See the arming site
+        # for the full rationale.
+        known_rows = self._resume_validation_known_rows
+        # A position can legitimately carry more than one row -- two bump
+        # contacts logged at the same position estimate, say -- so map each
+        # position to the list of ids stored there and let each confirmed
+        # entry consume one. A flat position->id dict would collapse those
+        # rows onto a single id, refreshing one row twice while leaving the
+        # other stale: the same duplicate-row failure this id lookup exists
+        # to prevent.
+        known_ids_by_position: dict[tuple[float, float], list[str]] = {}
+        for row in known_rows:
+            known_ids_by_position.setdefault(row["position"], []).append(row["id"])
+        known = [self._obstacle_dict_to_domain(row) for row in known_rows]
+        result = reconcile_obstacles(
+            known_obstacles=known,
+            freshly_detected=self._resume_validation_collected,
+            now=datetime.now(timezone.utc),
+        )
+        for confirmed in result.confirmed:
+            # A confirmed obstacle is a RE-detection of one we already store a
+            # row for, so it must reuse that row's id. That is what makes
+            # save_obstacle's upsert-by-id refresh the record in place (and
+            # re-flag it unsynced); minting a fresh id here would insert a
+            # second row for the same physical obstacle and defeat the upsert
+            # entirely.
             #
-            # Keep the raw store rows, not just the domain objects: Obstacle
-            # has no id field at all (ids are a persistence concern owned by
-            # local_store), so the row is the only place an existing
-            # obstacle's id lives.
-            known_rows = local_store.list_obstacles_for_session(
-                self.conn, self.sweep_session.id
+            # reconcile_obstacles builds each confirmed entry as
+            # dataclasses.replace(known, last_confirmed_at=now), which changes
+            # only that one field -- so the entry's position is identical to
+            # the known obstacle it came from and is a safe key back to that
+            # obstacle's stored id.
+            self._save_obstacle(
+                confirmed, obstacle_id=known_ids_by_position[confirmed.position].pop(0)
             )
-            known_id_by_position = {row["position"]: row["id"] for row in known_rows}
-            known = [self._obstacle_dict_to_domain(row) for row in known_rows]
-            result = reconcile_obstacles(
-                known_obstacles=known,
-                freshly_detected=self._resume_validation_collected,
-                now=datetime.now(timezone.utc),
-            )
-            for confirmed in result.confirmed:
-                # A confirmed obstacle is a RE-detection of one we already
-                # store a row for, so it must reuse that row's id. That is
-                # what makes save_obstacle's upsert-by-id refresh the record
-                # in place (and re-flag it unsynced); minting a fresh id here
-                # would insert a second row for the same physical obstacle
-                # and defeat the upsert entirely.
-                #
-                # reconcile_obstacles builds each confirmed entry as
-                # dataclasses.replace(known, last_confirmed_at=now), which
-                # changes only that one field -- so the entry's position is
-                # identical to the known obstacle it came from and is a safe
-                # key back to that obstacle's stored id.
-                self._save_obstacle(
-                    confirmed, obstacle_id=known_id_by_position[confirmed.position]
-                )
-            # result.new_detections deliberately needs no save here: each
-            # fresh detection was already persisted with its own new id by
-            # _save_obstacle when _detect_obstacles first saw it this pass.
-            # Saving again would mint a second id and duplicate the row.
-            #
-            # `cleared` and `discrepancies` are logged for operator review
-            # via telemetry/obstacle status -- no further action in v1.
-            self._resume_validation_target = None
-            self._resume_validation_collected = []
+        # result.new_detections deliberately needs no save here: each fresh
+        # detection was already persisted with its own new id by
+        # _save_obstacle when _detect_obstacles first saw it this pass.
+        # Saving again would mint a second id and duplicate the row.
+        #
+        # `cleared` and `discrepancies` are logged for operator review via
+        # telemetry/obstacle status -- no further action in v1.
+        self._resume_validation_target = None
+        self._resume_validation_collected = []
+        self._resume_validation_known_rows = []
 
     @staticmethod
     def _obstacle_dict_to_domain(obstacle_dict: dict[str, Any]):
@@ -1460,17 +1521,6 @@ RESUME_VALIDATION_MATCH_RADIUS_M = 3.0
                 "last_confirmed_at": obstacle.last_confirmed_at,
             },
         )
-
-    def _collect_for_resume_validation(self, obstacle) -> None:
-        if self._resume_validation_target is None or obstacle is None:
-            return
-        self._resume_validation_collected.append(obstacle)
-
-        from papaya_mission.geo_utils import flat_earth_distance_m
-        distance_to_target = flat_earth_distance_m(
-            self.position_fusion.current_estimate_as_lon_lat(), self._resume_validation_target
-        ) if hasattr(self.position_fusion.current_estimate, "current_estimate_as_lon_lat") else None
-        # Distance check is done in _check_resume_validation_arrival, called from _read_position.
 
     def _check_exclusion_zones(self) -> None:
         if not self.exclusion_polygons or self.rover is None:
