@@ -11,6 +11,32 @@ All notable changes to this project are documented here. Versioning follows
 - **PATCH** — fixes, tuning, and small additions (e.g. trim values, BOM
   entries, doc updates).
 
+## [2.1.0] - 2026-09-26
+
+### Added
+- MP-1 Backend Obstacle & Telemetry Sync: `POST /sync/sweep-sessions`,
+  `/sync/obstacles`, `/sync/telemetry` — client-generated-ID upsert/insert
+  sync for the Pi's sweep sessions, obstacles, and telemetry, plus a
+  read-only `list_pending_review` for the Management UI plan to build on.
+  Telemetry lands in a native MongoDB time-series collection.
+- `docs/adr/0003-telemetry-sync-idempotency.md` — records the discovery
+  that MongoDB rejects unique indexes on time-series collections, and the
+  resulting move from database-enforced to application-level telemetry
+  sync idempotency.
+
+### Changed
+- All three `/sync/*` endpoints now return `{"received": N, "inserted": M}`
+  instead of `{"synced": N}` — the prior single field meant "processed"
+  for sweep-sessions/obstacles but "newly inserted" for telemetry, an
+  ambiguity a sync client couldn't reliably act on. No existing consumer
+  depended on the old shape yet.
+- Obstacle sync now preserves human review decisions (`review_status`,
+  `reviewed_by`, `reviewed_at`, and a `permanent-confirmed` status) across
+  a Pi re-sync, instead of a full-document replace silently reverting them.
+- `MongoClient` now connects with `tz_aware=True`, so datetimes read back
+  from MongoDB (e.g. `Rover.created_at`, `Obstacle.first_detected_at`)
+  carry UTC tzinfo instead of coming back naive.
+
 ## [2.0.3] - 2026-09-23
 
 ### Added
