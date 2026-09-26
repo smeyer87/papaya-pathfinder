@@ -661,6 +661,20 @@ git commit -m "feat(pi-mission): add backend read/poll client (rover, geofences,
 - Consumes: `papaya_mission.runtime_config.{GPS_LOSS_GRACE_PERIOD_S, GPS_LOSS_MAX_ERROR_RADIUS_M, SENSOR_DETECTION_WIDTH_M}` (Task 1), `papaya_mission.sensor_hub.SensorHub` (Task 2), `papaya_mission.esp32_link.Esp32Link` (Task 3), `papaya_mission.backend_client.{fetch_rover, fetch_geofence, list_geofences}` (Task 4), `papaya_mission.row_spacing.derive_row_spacing_m`, `papaya_mission.coverage_pattern.generate_coverage_pattern`, `papaya_mission.sweep_session.{SweepSession, SweepSessionStatus, Waypoint}` (Mission Flow Decision Logic plan), `papaya_mission.local_store.{connect, save_sweep_session, list_unsynced_sweep_sessions}` (Pi Local Store & Sync Client plan).
 - Produces: `papaya_mission.runtime.MissionRuntime`. Constructor: `MissionRuntime(rover_id: str, backend_base_url: str, local_db_path: str, sensor_hub: SensorHub, esp32_link: Esp32Link, http_client: httpx.Client | None = None)`. Public methods this task adds: `.startup() -> None` (fetches rover config, connects local storage, checks for an in-progress session — Task 6 fills in the resume branch, this task's `.startup()` only handles "none found, stay idle"), `.handle_start_sweep(payload: dict) -> None` (builds a new `SweepSession` from a geofence id and persists it). Attributes later tasks rely on: `.rover: dict | None`, `.expected_metrics: set[str]`, `.sweep_session: SweepSession | None`, `.exclusion_polygons: list[shapely.geometry.Polygon]`, `.conn: sqlite3.Connection`, `.http_client: httpx.Client`.
 
+> **Correction applied in the final fix wave** (see
+> `.superpowers/sdd/2026-09-25-mp1-mission-runtime/final-fix-wave-report.md`).
+> `.expected_metrics` as originally specified was built purely from the
+> rover's `sensor_manifest` — i.e. physical sensor *names* (`gps`, `imu`,
+> `bump`). Those names never match the derived telemetry keys Task 8 actually
+> samples, and `build_telemetry_record` treats the expected set as both floor
+> and ceiling, so every real reading was dropped and each record stored as
+> all-`"missing"`. `startup()` now unions the manifest-derived set with a new
+> named `runtime_config.MP1_EXPECTED_METRICS` constant holding MP-1's derived
+> telemetry keys (`position`, `position_uncertainty_m`, `heading_deg`,
+> `error_radius_m`, `nav_mode`, `waypoint_index`, `throttle_position`,
+> `mission_alert`). `test_startup_fetches_rover_and_builds_expected_metrics`
+> was updated to assert the union rather than `{"gps", "imu"}` alone.
+
 - [ ] **Step 1: Write the failing tests**
 
 ```python
@@ -917,6 +931,20 @@ git commit -m "feat(pi-mission): add MissionRuntime startup and start_sweep hand
 **Interfaces:**
 - Consumes: Task 5's `MissionRuntime`, `papaya_mission.sweep_session.{SweepSession, SweepSessionStatus, Waypoint}`, `papaya_mission.local_store.list_unsynced_sweep_sessions` (a sweep session stays "unsynced" until Home-return sync, so any interrupted/in-progress one not yet synced is exactly the auto-resume candidate), `papaya_mission.local_store.list_obstacles_for_session`.
 - Produces: extends `.startup()` — if local storage has a `SweepSession` with `status in ("in_progress", "interrupted")`, rebuild it in memory, re-fetch its geofences (rebuilding `.exclusion_polygons`), transition it to `IN_PROGRESS` via `.resume()` if it was `INTERRUPTED`, and arm resume-validation: `._resume_validation_target` is set to the position of the waypoint at `last_completed_waypoint_index` (or `None` if that's -1, meaning nothing to re-scan toward), `._resume_validation_collected` starts empty, and `._resume_validation_known_rows` is snapshotted from `local_store.list_obstacles_for_session` — the obstacles already stored for this session at the moment of arming, i.e. everything detected *before* the resume pass. Task 7's tick loop drains `._resume_validation_collected` and reconciles it against that snapshot via `resume_validation.reconcile_obstacles` once the rover's position comes within a fixed threshold of `._resume_validation_target`. That reconciliation is an unconditional tick step of its own (`._check_resume_validation_arrival()`), not something a detection triggers — arriving at the target having detected *nothing* is the case that produces the `cleared`/`discrepancies` report resume-validation exists for.
+
+> **Correction applied in the final fix wave** (see
+> `.superpowers/sdd/2026-09-25-mp1-mission-runtime/final-fix-wave-report.md`).
+> "any interrupted/in-progress one not yet synced is exactly the auto-resume
+> candidate" is true but not sufficient when there is more than one:
+> `list_unsynced_sweep_sessions` has no `ORDER BY`, so the implementation's
+> `candidates[0]` was SQLite insertion order rather than recency, and a stale
+> interrupted session still on disk alongside a newer one could be resumed in
+> preference to it. `_resume_in_progress_session_if_any` now sorts candidates
+> by `started_at` descending before taking the first (recency is the caller's
+> policy, not a property of the table) and logs a warning naming the ids it
+> skips. The resume-validation id lookup was also re-keyed from position alone
+> to `(position, type, detection_method, first_detected_at)`, so two obstacles
+> at a bit-identical position cannot have their stored ids conflated.
 
 **Design note on why resume-validation isn't a single blocking call:** the design spec says the rover "passively re-scans obstacles it passes" while transiting back to the resume point — that's inherently a multi-tick process (the rover has to physically drive there), not something `startup()` can do synchronously. This task only arms the target; Task 7 does the actual reconciliation once the rover arrives.
 
@@ -1180,7 +1208,39 @@ git commit -m "feat(pi-mission): auto-resume in-progress sweep session on restar
 
 **Interfaces:**
 - Consumes: `papaya_mission.position_fusion.{GpsFix, ImuReading, PositionEstimate, PositionFusion}`, `papaya_mission.gps_loss_decision.decide_gps_loss_response`, `papaya_mission.exclusion_check.find_intruded_exclusion`, `papaya_mission.exclusion_decision.decide_exclusion_response`, `papaya_mission.obstacle_detection.{obstacle_from_ultrasonic_camera_detection, obstacle_from_bump_contact}`, `papaya_mission.classification.classify_permanence` (called internally by `obstacle_from_ultrasonic_camera_detection`, not directly here), `papaya_mission.resume_validation.reconcile_obstacles`, `papaya_mission.local_store.save_obstacle` (the known-obstacle set reconciliation runs against was snapshotted into `._resume_validation_known_rows` back in Task 6, so this task issues no fresh `list_obstacles_for_session` query), `papaya_mission.runtime_config.{GPS_LOSS_GRACE_PERIOD_S, GPS_LOSS_MAX_ERROR_RADIUS_M}`.
-- Produces: `.tick() -> None` — one iteration of the sensing/position/obstacle/resume-validation/exclusion sequence (command handling and telemetry are Task 8). Also produces `.mission_alert: str | None` — set to `"gps_stop_and_alert"` or `"exclusion_wait_for_help"` when either decision function returns its stop branch; the tick loop checks this and Task 8's command handling clears it on an operator response. A resume-validation match distance of 3.0m (matching `resume_validation.reconcile_obstacles`'s own default `match_radius_m`) is used to decide the rover has "arrived" at `._resume_validation_target`.
+- Produces: `.tick() -> None` — one iteration of the sensing/position/obstacle/resume-validation/exclusion sequence (command handling and telemetry are Task 8). Also produces `.mission_alert: str | None` — set to `"gps_stop_and_alert"` or `"exclusion_wait_for_help"` when either decision function returns its stop branch. A resume-validation match distance of 3.0m (matching `resume_validation.reconcile_obstacles`'s own default `match_radius_m`) is used to decide the rover has "arrived" at `._resume_validation_target`.
+
+> **Corrections applied in the final fix wave** (see
+> `.superpowers/sdd/2026-09-25-mp1-mission-runtime/final-fix-wave-report.md`).
+> Three things in this task as originally specified were wrong or incomplete:
+>
+> 1. **`mission_alert` lifecycle.** This section said "Task 8's command
+>    handling clears it on an operator response" — no such clearing was ever
+>    implemented, in Task 8 or anywhere else, so the alert latched for the life
+>    of the process even after the condition resolved, and it was never logged
+>    or reported either. Each of the two checks now re-evaluates fresh every
+>    tick (which is how both decision functions already worked) and clears
+>    *its own* alert when its condition genuinely resolves, logging on the
+>    transition in and out rather than at tick rate. GPS-loss takes precedence
+>    over an exclusion alert: with an untrusted position the intrusion verdict
+>    is itself untrustworthy, so an exclusion check must neither clear nor
+>    overwrite a held GPS alert. `mission_alert` is also now reported in
+>    telemetry (as `"none"` when unset — distinct from the `"missing"`
+>    sentinel, which means "could not be read").
+> 2. **GPS-loss safety when GPS was never acquired.** `_check_gps_loss`
+>    returned immediately while `._last_gps_fix_monotonic` was `None`, and
+>    `_read_position`'s dummy-seed path (no real fix ever received) left it
+>    `None`. A cold boot under tree cover with zero real fixes therefore never
+>    evaluated GPS-loss safety at all. The dummy seed now starts the same
+>    grace-period clock: "never had a fix" is treated as "just lost one".
+> 3. **Sensor/ESP32 read fault isolation.** `_read_position`,
+>    `_detect_obstacles` and the bump poll called injected driver methods
+>    unguarded. Each call site is now individually wrapped in
+>    `try/except Exception` with a documented degradation per site, and
+>    `tick()` skips the position-dependent steps (but still samples telemetry
+>    and polls commands) when a failed IMU read leaves no position estimate.
+>    The `SHOULD`-not-raise expectation is now written into the `sensor_hub`
+>    and `esp32_link` Protocol docstrings.
 
 **Design note on resume-validation's place in the tick sequence:** `._check_resume_validation_arrival()` is a tick step in its own right, called unconditionally right after `._detect_obstacles()` — *not* a call made from inside the paired-detection branch. Two things follow from that, and both are load-bearing:
 
@@ -1801,7 +1861,39 @@ git commit -m "feat(pi-mission): add tick loop position/obstacle/exclusion sensi
 
 **Interfaces:**
 - Consumes: `papaya_mission.backend_client.{poll_commands, ack_command}` (Task 4), `papaya_mission.telemetry_record.build_telemetry_record`, `papaya_mission.local_store.{save_telemetry_record, commit, should_commit_telemetry, DEFAULT_TELEMETRY_COMMIT_INTERVAL_S}`, `papaya_mission.sweep_session.SweepSession.{mark_waypoint_complete, interrupt, resume}`, `papaya_mission.esp32_link.Esp32Status`.
-- Produces: extends `.tick()` to also handle waypoint-completion, telemetry sampling/commit, and command polling. New command types handled: `pause_sweep` → `SweepSession.interrupt()`; `resume_sweep` → `SweepSession.resume()`, and if the ESP32 link was down during the pause, checks `Esp32Link.status()` first — if halted-on-contact, treats it as a bump event instead of resuming (per design notes: Error handling — "ESP32 link reconnects"); `stop_sweep`/`abort_home` → marks the session interrupted/completed as appropriate and sets `._pending_sync = True` for Task 9's Home-return sync to pick up; `update_geofence` → re-fetches exclusion zones only (not the inclusive boundary/pattern — re-planning a coverage pattern mid-sweep is out of scope for MP-1; this only updates which zones the running `exclusion_check` avoids).
+- Produces: extends `.tick()` to also handle waypoint-completion, telemetry sampling/commit, and command polling. New command types handled: `start_sweep` → `handle_start_sweep(command["payload"])` (see the final-fix-wave note below); `pause_sweep` → `SweepSession.interrupt()`; `resume_sweep` → `SweepSession.resume()`, and if the ESP32 link was down during the pause, checks `Esp32Link.status()` first — if halted-on-contact, treats it as a bump event instead of resuming (per design notes: Error handling — "ESP32 link reconnects"); `stop_sweep`/`abort_home` → **interrupts** an in-progress session (it never marks one completed — completion happens only via the waypoint-arrival full-coverage path in `_check_waypoint_arrival`) and then calls `_home_return_sync()` directly; `update_geofence` → re-fetches exclusion zones only (not the inclusive boundary/pattern — re-planning a coverage pattern mid-sweep is out of scope for MP-1; this only updates which zones the running `exclusion_check` avoids). Any unrecognized command type falls to an `else` that logs a warning.
+
+> **Corrections applied in the final fix wave** (see
+> `.superpowers/sdd/2026-09-25-mp1-mission-runtime/final-fix-wave-report.md`).
+> This section originally described a `._pending_sync = True` flag for Task 9
+> to pick up; that flag was never implemented and was superseded by the
+> direct `_home_return_sync()` call above. It also said `stop_sweep`/
+> `abort_home` "marks the session interrupted/completed as appropriate",
+> which overstated it — that path only ever interrupts. Separately, the
+> `start_sweep` branch was missing from the implemented `_handle_command`
+> entirely (`handle_start_sweep` existed and was only ever called directly by
+> tests), so a `start_sweep` polled from the backend was silently acked
+> without starting anything; it is now dispatched, and the per-command guard
+> catches `Exception` rather than only `httpx.HTTPError` so a malformed
+> command cannot take down the tick.
+>
+> The telemetry sample this task produces was also hollow: `readings` only
+> ever held `error_radius_m`/`heading_deg`, which (see the Task 5 correction)
+> never intersected `expected_metrics`, so every stored record was
+> all-`"missing"` and `position` — the design spec's primary live-summary
+> metric — was never emitted. `_sample_telemetry_if_due` now populates
+> `position` (GeoJSON `[lon, lat]`), `position_uncertainty_m`,
+> `error_radius_m`, `heading_deg`, `nav_mode`
+> (`idle`/`sweeping`/`interrupted`), `waypoint_index`, `mission_alert`, and —
+> new in this wave, human-approved — `throttle_position` plus per-servo
+> `servo_{id}_deg` keys read from a new `Esp32Link.read_drive_status()`
+> returning a `DriveStatus` dataclass. Those per-servo keys are dynamic, so
+> they cannot live in the static `MP1_EXPECTED_METRICS`;
+> `_sample_telemetry_if_due` extends the expected set with that sample's real
+> servo ids before calling `build_telemetry_record`, leaving that function's
+> already-tested floor-and-ceiling contract untouched. The `DriveStatus`
+> servo key names are a placeholder pending the ESP32 firmware plan settling
+> the real steering-servo naming convention.
 
 - [ ] **Step 1: Write the failing tests**
 
