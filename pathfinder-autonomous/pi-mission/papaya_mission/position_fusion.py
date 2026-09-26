@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from papaya_mission.geo_utils import METERS_PER_DEGREE_LAT, project_position
+from papaya_mission.geo_utils import project_position
 
 
 # These three are kw_only so that a positional call can never silently swap

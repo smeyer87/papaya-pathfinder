@@ -2,8 +2,8 @@ import math
 
 import pytest
 
+from papaya_mission.geo_utils import METERS_PER_DEGREE_LAT
 from papaya_mission.position_fusion import (
-    METERS_PER_DEGREE_LAT,
     GpsFix,
     ImuReading,
     PositionEstimate,
