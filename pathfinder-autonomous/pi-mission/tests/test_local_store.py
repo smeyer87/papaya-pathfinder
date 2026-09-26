@@ -110,6 +110,32 @@ def test_saving_an_obstacle_again_refreshes_position_and_confidence(conn):
     assert unsynced[0]["type"] == "utility_pole"
 
 
+def test_list_obstacles_for_session_returns_them_regardless_of_sync_state(conn):
+    first = _obstacle("obs-1")
+    second = _obstacle("obs-2")
+    other_session = _obstacle("obs-3")
+    other_session["sweep_session_id"] = "sess-2"
+    for obstacle in (first, second, other_session):
+        local_store.save_obstacle(conn, obstacle)
+    local_store.mark_obstacles_synced(
+        conn, ["obs-1"], datetime(2026, 9, 24, 13, 0, 0, tzinfo=timezone.utc)
+    )
+
+    for_sess_1 = local_store.list_obstacles_for_session(conn, "sess-1")
+    for_sess_2 = local_store.list_obstacles_for_session(conn, "sess-2")
+
+    # obs-1 is synced but must still be visible -- resume-validation
+    # reconciles against every known obstacle, not just unsynced ones.
+    assert sorted(o["id"] for o in for_sess_1) == ["obs-1", "obs-2"]
+    assert [o["id"] for o in for_sess_2] == ["obs-3"]
+
+
+def test_list_obstacles_for_session_returns_empty_for_unknown_session(conn):
+    local_store.save_obstacle(conn, _obstacle())
+
+    assert local_store.list_obstacles_for_session(conn, "no-such-session") == []
+
+
 # --- Sweep sessions ------------------------------------------------------
 
 def test_save_and_list_unsynced_sweep_session(conn):
@@ -134,6 +160,27 @@ def test_updating_a_synced_sweep_session_marks_it_unsynced_again(conn):
     unsynced = local_store.list_unsynced_sweep_sessions(conn)
     assert len(unsynced) == 1
     assert unsynced[0]["status"] == "completed"
+
+
+def test_get_sweep_session_finds_a_session_after_it_has_been_synced(conn):
+    local_store.save_sweep_session(conn, _sweep_session())
+    local_store.mark_sweep_sessions_synced(
+        conn, ["sess-1"], datetime(2026, 9, 24, 13, 0, 0, tzinfo=timezone.utc)
+    )
+    assert local_store.list_unsynced_sweep_sessions(conn) == []
+
+    found = local_store.get_sweep_session(conn, "sess-1")
+
+    assert found is not None
+    assert found["id"] == "sess-1"
+    assert found["status"] == "in_progress"
+    assert found["pattern"][0]["order"] == 0
+
+
+def test_get_sweep_session_returns_none_for_an_unknown_id(conn):
+    local_store.save_sweep_session(conn, _sweep_session())
+
+    assert local_store.get_sweep_session(conn, "no-such-session") is None
 
 
 # --- Telemetry -------------------------------------------------------------

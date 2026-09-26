@@ -143,6 +143,20 @@ def list_unsynced_obstacles(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     return [_row_to_obstacle(row) for row in rows]
 
 
+def list_obstacles_for_session(
+    conn: sqlite3.Connection, sweep_session_id: str
+) -> list[dict[str, Any]]:
+    """All obstacles detected during a sweep session, synced or not --
+    unlike list_unsynced_obstacles, this doesn't disappear once a
+    Home-return sync marks them synced. Used by resume-validation to
+    build the known-obstacle set to reconcile against fresh detections.
+    """
+    rows = conn.execute(
+        "SELECT * FROM obstacles WHERE sweep_session_id = ?", (sweep_session_id,)
+    ).fetchall()
+    return [_row_to_obstacle(row) for row in rows]
+
+
 def mark_obstacles_synced(
     conn: sqlite3.Connection, obstacle_ids: list[str], synced_at: datetime
 ) -> None:
@@ -204,6 +218,15 @@ def save_sweep_session(conn: sqlite3.Connection, session: dict[str, Any]) -> Non
 def list_unsynced_sweep_sessions(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     rows = conn.execute("SELECT * FROM sweep_sessions WHERE synced_at IS NULL").fetchall()
     return [_row_to_sweep_session(row) for row in rows]
+
+
+def get_sweep_session(conn: sqlite3.Connection, session_id: str) -> dict[str, Any] | None:
+    """A specific sweep session by id, synced or not -- used by
+    crash-recovery to reload the in-progress/interrupted session
+    without depending on it still being unsynced.
+    """
+    row = conn.execute("SELECT * FROM sweep_sessions WHERE id = ?", (session_id,)).fetchone()
+    return _row_to_sweep_session(row) if row is not None else None
 
 
 def mark_sweep_sessions_synced(

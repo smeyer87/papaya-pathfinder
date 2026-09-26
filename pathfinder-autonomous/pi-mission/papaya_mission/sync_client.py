@@ -76,18 +76,46 @@ def _obstacle_to_wire(obstacle: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def sync_telemetry(conn: sqlite3.Connection, client: httpx.Client, base_url: str) -> int:
+DEFAULT_TELEMETRY_SYNC_CHUNK_SIZE = 500
+
+
+def sync_telemetry(
+    conn: sqlite3.Connection,
+    client: httpx.Client,
+    base_url: str,
+    chunk_size: int = DEFAULT_TELEMETRY_SYNC_CHUNK_SIZE,
+) -> int:
+    """Pushes unsynced telemetry, POSTing at most `chunk_size` records
+    per request and marking each chunk synced before starting the next.
+
+    Telemetry is the highest-volume entity here (obstacles and sweep
+    sessions are rare, high-value events), so a long offline stretch can
+    build a backlog large enough to hit a request-size or timeout limit.
+    Sent as one request, such a backlog would fail identically on every
+    future attempt and never drain. Chunking lets each sync make partial
+    progress instead.
+
+    This is separate from the deliberate no-retry/no-backoff decision:
+    on a mid-batch failure the already-POSTed chunks stay marked synced
+    (they did succeed) and the failing chunk's records stay unsynced for
+    the next attempt, exactly as the no-retry contract prescribes.
+    """
     unsynced = local_store.list_unsynced_telemetry(conn)
     if not unsynced:
         return 0
 
-    payload = {"records": [_telemetry_to_wire(r) for r in unsynced]}
-    response = client.post(f"{base_url}/sync/telemetry", json=payload)
-    response.raise_for_status()
+    synced_count = 0
+    for start in range(0, len(unsynced), chunk_size):
+        chunk = unsynced[start : start + chunk_size]
+        payload = {"records": [_telemetry_to_wire(r) for r in chunk]}
+        response = client.post(f"{base_url}/sync/telemetry", json=payload)
+        response.raise_for_status()
 
-    now = datetime.now(timezone.utc)
-    local_store.mark_telemetry_synced(conn, [r["id"] for r in unsynced], now)
-    return len(unsynced)
+        now = datetime.now(timezone.utc)
+        local_store.mark_telemetry_synced(conn, [r["id"] for r in chunk], now)
+        synced_count += len(chunk)
+
+    return synced_count
 
 
 def _telemetry_to_wire(record: dict[str, Any]) -> dict[str, Any]:
