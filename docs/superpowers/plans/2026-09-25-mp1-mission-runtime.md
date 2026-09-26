@@ -916,7 +916,7 @@ git commit -m "feat(pi-mission): add MissionRuntime startup and start_sweep hand
 
 **Interfaces:**
 - Consumes: Task 5's `MissionRuntime`, `papaya_mission.sweep_session.{SweepSession, SweepSessionStatus, Waypoint}`, `papaya_mission.local_store.list_unsynced_sweep_sessions` (a sweep session stays "unsynced" until Home-return sync, so any interrupted/in-progress one not yet synced is exactly the auto-resume candidate), `papaya_mission.local_store.list_obstacles_for_session`.
-- Produces: extends `.startup()` — if local storage has a `SweepSession` with `status in ("in_progress", "interrupted")`, rebuild it in memory, re-fetch its geofences (rebuilding `.exclusion_polygons`), transition it to `IN_PROGRESS` via `.resume()` if it was `INTERRUPTED`, and arm resume-validation: `._resume_validation_target` is set to the position of the waypoint at `last_completed_waypoint_index` (or `None` if that's -1, meaning nothing to re-scan toward), `._resume_validation_collected` starts empty, and `._resume_validation_known_rows` is snapshotted from `local_store.list_obstacles_for_session` — the obstacles already stored for this session at the moment of arming, i.e. everything detected *before* the resume pass. Task 7's tick loop drains `._resume_validation_collected` and reconciles it against that snapshot via `resume_validation.reconcile_obstacles` once the rover's position comes within a fixed threshold of `._resume_validation_target`.
+- Produces: extends `.startup()` — if local storage has a `SweepSession` with `status in ("in_progress", "interrupted")`, rebuild it in memory, re-fetch its geofences (rebuilding `.exclusion_polygons`), transition it to `IN_PROGRESS` via `.resume()` if it was `INTERRUPTED`, and arm resume-validation: `._resume_validation_target` is set to the position of the waypoint at `last_completed_waypoint_index` (or `None` if that's -1, meaning nothing to re-scan toward), `._resume_validation_collected` starts empty, and `._resume_validation_known_rows` is snapshotted from `local_store.list_obstacles_for_session` — the obstacles already stored for this session at the moment of arming, i.e. everything detected *before* the resume pass. Task 7's tick loop drains `._resume_validation_collected` and reconciles it against that snapshot via `resume_validation.reconcile_obstacles` once the rover's position comes within a fixed threshold of `._resume_validation_target`. That reconciliation is an unconditional tick step of its own (`._check_resume_validation_arrival()`), not something a detection triggers — arriving at the target having detected *nothing* is the case that produces the `cleared`/`discrepancies` report resume-validation exists for.
 
 **Design note on why resume-validation isn't a single blocking call:** the design spec says the rover "passively re-scans obstacles it passes" while transiting back to the resume point — that's inherently a multi-tick process (the rover has to physically drive there), not something `startup()` can do synchronously. This task only arms the target; Task 7 does the actual reconciliation once the rover arrives.
 
@@ -1120,14 +1120,15 @@ from papaya_mission.sweep_session import SweepSession, SweepSessionStatus, Waypo
             self._resume_validation_target = resume_waypoint.position
             # Snapshot the known obstacles ONCE, here, at the moment
             # resume-validation is armed -- the tick loop hasn't run yet, so
-            # nothing this pass detects can be in it. Re-querying the store
-            # at reconciliation time instead would be wrong: _detect_obstacles
-            # persists every fresh detection immediately (Task 7), so a live
-            # query would hand reconcile_obstacles each of this pass's own
-            # fresh detections as a "known" obstacle sitting 0m from itself.
-            # Its greedy nearest-first matching would then pair every fresh
-            # detection with its own just-written row, leaving the genuinely
-            # pre-existing obstacles unmatched and wrongly reported as
+            # nothing this pass detects can be in it. Re-querying the store at
+            # reconciliation time instead would be wrong: _detect_obstacles
+            # defers paired detections while a pass is armed (Task 7), but bump
+            # contacts still persist the moment they happen, at the rover's own
+            # position. A live query would hand reconcile_obstacles those bump
+            # rows as "known" obstacles sitting within metres of this pass's
+            # fresh detections, and its greedy nearest-first matching would pair
+            # a fresh detection with a row this same pass wrote, leaving the
+            # genuinely pre-existing obstacle unmatched and wrongly reported as
             # cleared/discrepancies -- precisely the failure resume-validation
             # exists to catch. (The alternative, tagging freshly inserted ids
             # and subtracting them later, needs bookkeeping in every
@@ -1179,7 +1180,14 @@ git commit -m "feat(pi-mission): auto-resume in-progress sweep session on restar
 
 **Interfaces:**
 - Consumes: `papaya_mission.position_fusion.{GpsFix, ImuReading, PositionEstimate, PositionFusion}`, `papaya_mission.gps_loss_decision.decide_gps_loss_response`, `papaya_mission.exclusion_check.find_intruded_exclusion`, `papaya_mission.exclusion_decision.decide_exclusion_response`, `papaya_mission.obstacle_detection.{obstacle_from_ultrasonic_camera_detection, obstacle_from_bump_contact}`, `papaya_mission.classification.classify_permanence` (called internally by `obstacle_from_ultrasonic_camera_detection`, not directly here), `papaya_mission.resume_validation.reconcile_obstacles`, `papaya_mission.local_store.save_obstacle` (the known-obstacle set reconciliation runs against was snapshotted into `._resume_validation_known_rows` back in Task 6, so this task issues no fresh `list_obstacles_for_session` query), `papaya_mission.runtime_config.{GPS_LOSS_GRACE_PERIOD_S, GPS_LOSS_MAX_ERROR_RADIUS_M}`.
-- Produces: `.tick() -> None` — one iteration of the sensing/position/obstacle/exclusion sequence (command handling and telemetry are Task 8). Also produces `.mission_alert: str | None` — set to `"gps_stop_and_alert"` or `"exclusion_wait_for_help"` when either decision function returns its stop branch; the tick loop checks this and Task 8's command handling clears it on an operator response. A resume-validation match distance of 3.0m (matching `resume_validation.reconcile_obstacles`'s own default `match_radius_m`) is used to decide the rover has "arrived" at `._resume_validation_target`.
+- Produces: `.tick() -> None` — one iteration of the sensing/position/obstacle/resume-validation/exclusion sequence (command handling and telemetry are Task 8). Also produces `.mission_alert: str | None` — set to `"gps_stop_and_alert"` or `"exclusion_wait_for_help"` when either decision function returns its stop branch; the tick loop checks this and Task 8's command handling clears it on an operator response. A resume-validation match distance of 3.0m (matching `resume_validation.reconcile_obstacles`'s own default `match_radius_m`) is used to decide the rover has "arrived" at `._resume_validation_target`.
+
+**Design note on resume-validation's place in the tick sequence:** `._check_resume_validation_arrival()` is a tick step in its own right, called unconditionally right after `._detect_obstacles()` — *not* a call made from inside the paired-detection branch. Two things follow from that, and both are load-bearing:
+
+1. **Arrival is checked whether or not anything was detected.** The reason resume-validation exists is to report that a previously-known obstacle is no longer there, which by definition means arriving at the target and detecting nothing. Driving reconciliation off a detection would make that case unreachable — no detection, no call site, no reconciliation, and the pass stays armed forever.
+2. **While a pass is armed, a fresh paired detection is deferred, not saved.** `_detect_obstacles` collects it into `._resume_validation_collected` instead of calling `_save_obstacle` on it. Reconciliation then decides its identity exactly once: a `confirmed` match upserts under the known obstacle's existing id; an unmatched entry in `result.new_detections` saves with a fresh id. Saving on detection *and* reconciling afterwards writes two rows for one physical obstacle — the fresh-id row plus the reused-id upsert — which then both sync to the backend as separate documents, and on the *next* resume pass the orphan fails to match and is reported as a false "this obstacle vanished" discrepancy.
+
+Bump-contact obstacles are outside all of this: they are a reactive source, not a resume-validation input, and keep saving immediately. That is also why the known-obstacle snapshot taken in Task 6 is still load-bearing — bump rows written during the pass are exactly what a live `list_obstacles_for_session` at reconciliation time would wrongly admit into the known set.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1309,12 +1317,206 @@ def test_exclusion_intrusion_sets_wait_for_help_when_deep(tmp_path):
     runtime.tick()
 
     assert runtime.mission_alert == "exclusion_wait_for_help"
+
+
+RESUME_WAYPOINT_POSITION = (-85.0, 38.0)
+PRE_CRASH_DETECTED_AT = datetime(2026, 9, 25, 10, 2, 0, tzinfo=timezone.utc)
+
+
+def _known_obstacle(obstacle_id: str, position: tuple[float, float]) -> dict:
+    return {
+        "id": obstacle_id,
+        "sweep_session_id": "sess-1",
+        "position": position,
+        "position_uncertainty_m": 1.5,
+        "type": "barrel",
+        "classification_confidence": 0.9,
+        "detection_method": "ultrasonic+camera",
+        "status": "permanent-pending",
+        "first_detected_at": PRE_CRASH_DETECTED_AT,
+        "last_confirmed_at": None,
+    }
+
+
+def _make_resumed_runtime(tmp_path, hub, known_obstacles, esp32_link=None) -> MissionRuntime:
+    """A runtime whose local store already holds an interrupted sweep session
+    (last completed waypoint = order 0 at RESUME_WAYPOINT_POSITION) plus
+    `known_obstacles`, started up so the crash-recovery path arms
+    resume-validation and snapshots those obstacles as the known set.
+    """
+    rover = {"_id": "rover-1", "name": "George", "length_m": 0.6, "turn_style": "spin_in_place"}
+    inclusive = {"_id": "fence-1", "type": "inclusive", "boundary": {"type": "Polygon", "coordinates": [FIELD_RING]}}
+    client = httpx.Client(transport=httpx.MockTransport(_handler(rover, [inclusive])))
+    runtime = MissionRuntime(
+        rover_id="rover-1", backend_base_url="http://backend.local",
+        local_db_path=str(tmp_path / "test.db"), sensor_hub=hub,
+        esp32_link=esp32_link or FakeEsp32Link(), http_client=client,
+    )
+    local_store.save_sweep_session(
+        runtime.conn,
+        {
+            "id": "sess-1",
+            "rover_id": "rover-1",
+            "geofence_id": "fence-1",
+            "status": "interrupted",
+            "pattern": [
+                {"order": 0, "position": {"type": "Point", "coordinates": list(RESUME_WAYPOINT_POSITION)}},
+                {"order": 1, "position": {"type": "Point", "coordinates": [-85.0, 38.01]}},
+            ],
+            "last_completed_waypoint_index": 0,
+            "started_at": datetime(2026, 9, 25, 10, 0, 0, tzinfo=timezone.utc),
+            "interrupted_at": datetime(2026, 9, 25, 10, 5, 0, tzinfo=timezone.utc),
+            "completed_at": None,
+        },
+    )
+    for obstacle in known_obstacles:
+        local_store.save_obstacle(runtime.conn, obstacle)
+    local_store.commit(runtime.conn)
+
+    runtime.startup()  # auto-resumes; arms resume-validation and snapshots known rows
+    return runtime
+
+
+def test_resume_validation_reconciles_against_snapshot_not_a_contaminated_live_query(tmp_path):
+    """Regression test for the snapshot-vs-live-query design in
+    _resume_in_progress_session_if_any (Task 6) / _check_resume_validation_arrival
+    (Task 7). A fresh obstacle row that lands in the local store mid-pass must
+    not contaminate the known-obstacle set used to reconcile the eventual
+    re-detection of the pre-crash obstacle. If reconciliation re-queried the
+    store live instead of using the ._resume_validation_known_rows snapshot
+    taken at arm time, that fresh row would show up in the "known" set right
+    alongside the real pre-crash obstacle, and greedy nearest-first matching
+    would let it claim the re-detection.
+
+    Paired ultrasonic+camera detections are now DEFERRED while a resume pass is
+    armed, so they no longer reach the store before reconciliation. Bump
+    contacts still persist immediately, though -- they are a reactive source
+    outside resume-validation reconciliation entirely -- so they are what keeps
+    the snapshot load-bearing, and what this test uses as its decoy.
+    """
+    hub = SimulatedSensorHub(INITIAL_IMU)
+    esp32 = FakeEsp32Link()
+    # The pre-crash obstacle sits ~2.2m north of the resume waypoint, so a bump
+    # row logged at the waypoint itself is strictly CLOSER to the re-detection
+    # than the real pre-crash obstacle is -- the ordering that makes a live
+    # query actually lose.
+    runtime = _make_resumed_runtime(
+        tmp_path, hub, [_known_obstacle("obs-pre-crash", (-85.0, 38.00002))], esp32_link=esp32
+    )
+    assert runtime._resume_validation_target == RESUME_WAYPOINT_POSITION
+    assert [row["id"] for row in runtime._resume_validation_known_rows] == ["obs-pre-crash"]
+
+    # Tick 1: the rover is far from the resume-validation target (still
+    # transiting back), so reconciliation must not fire yet. The fresh,
+    # unrelated paired detection made here is DEFERRED -- collected, not
+    # persisted -- because a resume pass is armed: reconciliation, not
+    # _detect_obstacles, decides what id it eventually gets.
+    hub.script_gps_fix(GpsFix(lat=38.05, lon=-85.0, accuracy_m=2.0, timestamp=0.0))
+    hub.script_ultrasonic(ObstacleDetection(relative_bearing_deg=0.0, range_m=2.0))
+    hub.script_camera(("cone", 0.8))
+    runtime.tick()
+
+    rows_after_tick1 = local_store.list_obstacles_for_session(runtime.conn, "sess-1")
+    assert [r["id"] for r in rows_after_tick1] == ["obs-pre-crash"]  # decoy deferred, not saved
+    assert len(runtime._resume_validation_collected) == 1
+    assert runtime._resume_validation_target is not None  # not yet reconciled -- still far away
+
+    # Tick 2: the rover arrives back at the resume-validation target and
+    # re-detects what is really the SAME obstacle the pre-crash session already
+    # knew about. It also logs a bump contact at its own position -- a row that
+    # lands in the store on this very tick, 0m from the fresh re-detection.
+    hub.script_gps_fix(GpsFix(lat=38.0, lon=-85.0, accuracy_m=2.0, timestamp=1.0))
+    hub.script_ultrasonic(ObstacleDetection(relative_bearing_deg=0.0, range_m=0.0))
+    hub.script_camera(("barrel", 0.9))
+    esp32.script_bump_events([BumpEvent(detected_at=datetime(2026, 9, 25, 10, 30, tzinfo=timezone.utc))])
+    runtime.tick()
+
+    assert runtime._resume_validation_target is None  # reconciled and cleared
+
+    rows_after_tick2 = local_store.list_obstacles_for_session(runtime.conn, "sess-1")
+    pre_crash_row = next(r for r in rows_after_tick2 if r["id"] == "obs-pre-crash")
+    # The re-detection must have been reconciled by reusing "obs-pre-crash"'s
+    # own id -- an upsert in place (first_detected_at unchanged,
+    # last_confirmed_at now set) -- not by minting a fresh id for it, and not
+    # crowded out by the same-tick bump row a live query would have included.
+    assert pre_crash_row["first_detected_at"] == PRE_CRASH_DETECTED_AT
+    assert pre_crash_row["last_confirmed_at"] is not None
+
+    bump_row = next(r for r in rows_after_tick2 if r["detection_method"] == "contact-only")
+    assert bump_row["last_confirmed_at"] is None  # never a reconciliation input
+
+    decoy_rows = [
+        r for r in rows_after_tick2
+        if r["id"] != "obs-pre-crash" and r["detection_method"] == "ultrasonic+camera"
+    ]
+    # The tick-1 decoy was genuinely new, so reconciliation persisted it once,
+    # with a fresh id -- never confirmed against the obstacle it isn't near.
+    assert len(decoy_rows) == 1
+    assert decoy_rows[0]["type"] == "cone"
+    assert decoy_rows[0]["last_confirmed_at"] is None
+
+
+def test_confirmed_redetection_during_resume_pass_saves_exactly_one_row(tmp_path):
+    """Regression test for the duplicate-row bug. A re-detection during a
+    resume pass must leave exactly ONE row, under the known obstacle's existing
+    id. The old code saved the fresh detection immediately with a new uuid AND
+    then upserted the confirmed match under the known id, leaving two rows for
+    one physical obstacle -- both synced to the backend as separate documents,
+    with the extra one reported as a bogus "vanished" discrepancy on the next
+    resume pass.
+    """
+    hub = SimulatedSensorHub(INITIAL_IMU)
+    runtime = _make_resumed_runtime(
+        tmp_path, hub, [_known_obstacle("obs-pre-crash", RESUME_WAYPOINT_POSITION)]
+    )
+
+    # Arrive at the resume target and re-detect the obstacle at its own position.
+    hub.script_gps_fix(GpsFix(lat=38.0, lon=-85.0, accuracy_m=2.0, timestamp=0.0))
+    hub.script_ultrasonic(ObstacleDetection(relative_bearing_deg=0.0, range_m=0.0))
+    hub.script_camera(("barrel", 0.9))
+    runtime.tick()
+
+    assert runtime._resume_validation_target is None  # reconciled
+
+    rows = local_store.list_obstacles_for_session(runtime.conn, "sess-1")
+    assert [r["id"] for r in rows] == ["obs-pre-crash"]  # one row, the original id
+    assert rows[0]["last_confirmed_at"] is not None  # refreshed in place
+    assert rows[0]["first_detected_at"] == PRE_CRASH_DETECTED_AT
+    assert len(local_store.list_unsynced_obstacles(runtime.conn)) == 1
+
+
+def test_resume_validation_reconciles_on_arrival_even_with_no_detection(tmp_path):
+    """Reconciliation is its own tick step, not a side effect of a paired
+    detection. Arriving at the resume target having detected NOTHING must still
+    reconcile -- that "the obstacle is genuinely gone" case is the whole point
+    of resume validation. Under the old code reconciliation was only reachable
+    from inside _detect_obstacles' paired-detection branch, so a silent arrival
+    never reconciled at all and the resume pass stayed armed forever.
+    """
+    hub = SimulatedSensorHub(INITIAL_IMU)
+    runtime = _make_resumed_runtime(
+        tmp_path, hub, [_known_obstacle("obs-pre-crash", RESUME_WAYPOINT_POSITION)]
+    )
+
+    # Arrive at the resume target with no ultrasonic/camera pair and no bump.
+    hub.script_gps_fix(GpsFix(lat=38.0, lon=-85.0, accuracy_m=2.0, timestamp=0.0))
+    runtime.tick()
+
+    assert runtime._resume_validation_target is None  # reconciliation ran and reset state
+    assert runtime._resume_validation_collected == []
+    assert runtime._resume_validation_known_rows == []
+
+    # Nothing re-detected: the known obstacle is untouched, surfaced as a
+    # discrepancy for operator review rather than confirmed.
+    rows = local_store.list_obstacles_for_session(runtime.conn, "sess-1")
+    assert [r["id"] for r in rows] == ["obs-pre-crash"]
+    assert rows[0]["last_confirmed_at"] is None
 ```
 
 - [ ] **Step 2: Run the tests and verify they fail**
 
 Run: `pytest tests/test_runtime_tick_sensing.py -v`
-Expected: FAIL — `AttributeError: 'MissionRuntime' object has no attribute 'tick'`
+Expected: FAIL — `AttributeError: 'MissionRuntime' object has no attribute 'tick'` for the first five; the three resume-validation tests fail on the duplicate row / never-reconciled assertions.
 
 - [ ] **Step 3: Add `tick()` and its helpers**
 
@@ -1344,6 +1546,7 @@ RESUME_VALIDATION_MATCH_RADIUS_M = 3.0
         self._read_position(now_monotonic)
         self._check_gps_loss(now_monotonic)
         self._detect_obstacles()
+        self._check_resume_validation_arrival()
         self._check_exclusion_zones()
 
     def _read_position(self, now_monotonic: float) -> None:
@@ -1389,8 +1592,20 @@ RESUME_VALIDATION_MATCH_RADIUS_M = 3.0
                 classification_confidence=confidence,
                 detected_at=datetime.now(timezone.utc),
             )
-            self._save_obstacle(paired_obstacle)
-            self._collect_for_resume_validation(paired_obstacle)
+            if self._resume_validation_target is not None:
+                # A resume pass is armed -- don't persist yet. Reconciliation
+                # (in _check_resume_validation_arrival) decides whether this is
+                # a re-detection (reuse the known obstacle's id, one row) or
+                # genuinely new (mint a fresh id, one row). Saving here too
+                # would create a SECOND row for a re-detection: the fresh-id
+                # row written now, plus the reused-id upsert written at
+                # reconciliation -- one physical obstacle, two records, both
+                # synced to the backend, and on the next resume pass the
+                # orphan fails to match and is reported as a bogus "vanished"
+                # discrepancy.
+                self._resume_validation_collected.append(paired_obstacle)
+            else:
+                self._save_obstacle(paired_obstacle)
 
         # Bump contacts are a separate, reactive obstacle source -- kept
         # independent of the ultrasonic+camera branch above (not folded
@@ -1403,10 +1618,20 @@ RESUME_VALIDATION_MATCH_RADIUS_M = 3.0
             )
             self._save_obstacle(bump_obstacle)
 
-    def _collect_for_resume_validation(self, obstacle) -> None:
+    def _check_resume_validation_arrival(self) -> None:
+        """Reconcile this resume pass's collected detections against the known
+        obstacles, once the rover is back at the resume-validation target.
+
+        A tick step in its own right, called unconditionally -- deliberately
+        NOT driven off a detection happening. Arriving at the target having
+        detected nothing is the single most important case resume validation
+        exists to report: it is what turns a pre-crash obstacle that is no
+        longer there into a `cleared`/`discrepancies` entry. Hanging this off
+        _detect_obstacles' paired-detection branch made that case unreachable,
+        because with nothing detected there was no call site to reach it from.
+        """
         if self._resume_validation_target is None:
             return
-        self._resume_validation_collected.append(obstacle)
 
         from papaya_mission.geo_utils import flat_earth_distance_m
 
@@ -1419,14 +1644,17 @@ RESUME_VALIDATION_MATCH_RADIUS_M = 3.0
         # The known set is the snapshot taken when resume-validation was armed
         # in _resume_in_progress_session_if_any (Task 6): the obstacles stored
         # BEFORE this resume pass began. It is deliberately not re-queried
-        # here. _detect_obstacles saves each fresh detection the moment it is
-        # made, several ticks before this reconciliation runs, so a live
-        # list_obstacles_for_session call would include this pass's own fresh
-        # detections in the known set -- and reconcile_obstacles matches
-        # greedily nearest-first, so each fresh detection would "confirm"
-        # its own just-written row at 0m and crowd out the pre-existing
-        # obstacle it should have been matched against. See the arming site
-        # for the full rationale.
+        # here. Paired detections made during an armed pass are deferred rather
+        # than saved, but bump contacts are NOT -- they are a reactive source
+        # outside reconciliation and still persist the moment they happen, at
+        # the rover's own position. A live list_obstacles_for_session call would
+        # therefore hand those bump rows to reconcile_obstacles as "known"
+        # obstacles, sitting within metres of this pass's fresh detections; its
+        # greedy nearest-first matching would let a bump row claim a fresh
+        # detection and crowd out the pre-existing obstacle that detection
+        # should have been matched against -- wrongly reporting a
+        # still-present obstacle as cleared. See the arming site for the full
+        # rationale.
         known_rows = self._resume_validation_known_rows
         # A position can legitimately carry more than one row -- two bump
         # contacts logged at the same position estimate, say -- so map each
@@ -1460,11 +1688,18 @@ RESUME_VALIDATION_MATCH_RADIUS_M = 3.0
             self._save_obstacle(
                 confirmed, obstacle_id=known_ids_by_position[confirmed.position].pop(0)
             )
-        # result.new_detections deliberately needs no save here: each fresh
-        # detection was already persisted with its own new id by
-        # _save_obstacle when _detect_obstacles first saw it this pass.
-        # Saving again would mint a second id and duplicate the row.
-        #
+        for new_obstacle in result.new_detections:
+            # This is where a genuinely-new obstacle detected during the resume
+            # pass finally gets persisted -- exactly once, with a fresh id
+            # (no obstacle_id, so _save_obstacle mints one).
+            #
+            # _detect_obstacles deferred it precisely so this decision could be
+            # made here: had it been saved on detection, a fresh row would
+            # already exist for every entry that reconciliation then classified
+            # as `confirmed`, on top of the reused-id upsert -- two rows per
+            # re-detected obstacle. Deferring means each collected detection is
+            # written once, under whichever id reconciliation says is correct.
+            self._save_obstacle(new_obstacle)
         # `cleared` and `discrepancies` are logged for operator review via
         # telemetry/obstacle status -- no further action in v1.
         self._resume_validation_target = None
@@ -1542,7 +1777,7 @@ RESUME_VALIDATION_MATCH_RADIUS_M = 3.0
 - [ ] **Step 4: Run the tests and verify they pass**
 
 Run: `pytest tests/test_runtime_tick_sensing.py -v`
-Expected: PASS (5 passed)
+Expected: PASS (8 passed)
 
 - [ ] **Step 5: Run the full test suite for regressions**
 
@@ -1724,6 +1959,7 @@ WAYPOINT_ARRIVAL_RADIUS_M = 1.0
         self._read_position(now_monotonic)
         self._check_gps_loss(now_monotonic)
         self._detect_obstacles()
+        self._check_resume_validation_arrival()
         self._check_exclusion_zones()
         self._check_waypoint_arrival()
         self._sample_telemetry_if_due(now_monotonic)
