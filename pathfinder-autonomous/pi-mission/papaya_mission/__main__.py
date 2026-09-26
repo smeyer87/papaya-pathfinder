@@ -36,7 +36,22 @@ def main() -> None:
 
     while True:
         tick_started = time.monotonic()
-        runtime.tick()
+        try:
+            runtime.tick()
+        except Exception:
+            # Outermost-loop catch-all, and deliberately broader than the
+            # per-subsystem guards inside runtime.py. Those stay narrow on
+            # purpose: a guard wrapped tightly around one sensor read or one
+            # command should not also swallow a logic bug in the code around
+            # it. Here at the top of an unattended, always-on rover process
+            # the tradeoff inverts -- a genuine uncaught bug that kills the
+            # process leaves the rover stranded mid-field with no telemetry
+            # and no command channel, which is strictly worse than logging
+            # the traceback and attempting the next tick. The traceback is
+            # logged in full (exc_info) precisely so this cannot hide a bug:
+            # a repeating exception here is a loud, diagnosable signal, not a
+            # silent pass.
+            logger.exception("tick raised -- logged and continuing to the next tick")
         tick_duration_s = time.monotonic() - tick_started
         if tick_duration_s > TICK_INTERVAL_S:
             logger.warning(

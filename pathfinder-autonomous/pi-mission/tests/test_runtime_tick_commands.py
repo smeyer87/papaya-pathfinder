@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timezone
 
 import httpx
@@ -46,6 +47,108 @@ def _make_started_runtime(tmp_path, commands, acked) -> MissionRuntime:
     hub.script_gps_fix(GpsFix(lat=38.05, lon=-85.0, accuracy_m=2.0, timestamp=0.0))
     runtime.tick()  # seed position_fusion
     return runtime
+
+
+def _make_idle_runtime(tmp_path, commands, acked) -> MissionRuntime:
+    """A started-up runtime with NO sweep session -- handle_start_sweep is
+    deliberately never called, so a sweep can only begin via a start_sweep
+    command travelling the real poll -> dispatch path.
+    """
+    rover = {"_id": "rover-1", "name": "George", "length_m": 0.6, "turn_style": "spin_in_place"}
+    inclusive = {"_id": "fence-1", "type": "inclusive", "boundary": {"type": "Polygon", "coordinates": [FIELD_RING]}}
+    client = httpx.Client(transport=httpx.MockTransport(_handler(rover, [inclusive], commands, acked)))
+    hub = SimulatedSensorHub(INITIAL_IMU)
+    runtime = MissionRuntime(
+        rover_id="rover-1", backend_base_url="http://backend.local",
+        local_db_path=str(tmp_path / "test.db"), sensor_hub=hub, esp32_link=FakeEsp32Link(), http_client=client,
+    )
+    runtime.startup()
+    hub.script_gps_fix(GpsFix(lat=38.05, lon=-85.0, accuracy_m=2.0, timestamp=0.0))
+    runtime._last_command_poll_monotonic = float("inf")  # seed position without polling
+    runtime.tick()
+    return runtime
+
+
+def test_start_sweep_command_is_dispatched_through_the_command_poll_path(tmp_path):
+    """Regression test: handle_start_sweep existed and worked, but
+    _handle_command had no start_sweep branch, so a start_sweep polled from
+    the backend fell through every branch and was acked as if handled --
+    the rover reported active with no sweep ever starting. This test drives
+    it through _poll_and_handle_commands_if_due -> _handle_command rather
+    than calling handle_start_sweep directly, which is the only way that
+    gap was observable.
+    """
+    commands = [{"_id": "cmd-1", "type": "start_sweep", "payload": {"geofence_id": "fence-1"}}]
+    acked = []
+    runtime = _make_idle_runtime(tmp_path, commands, acked)
+    assert runtime.sweep_session is None
+    runtime._last_command_poll_monotonic = 0.0  # force a poll this tick
+
+    runtime.tick()
+
+    assert runtime.sweep_session is not None
+    assert runtime.sweep_session.geofence_id == "fence-1"
+    assert runtime.sweep_session.status == SweepSessionStatus.IN_PROGRESS
+    assert acked == ["/commands/cmd-1/ack"]
+
+
+def test_unrecognized_command_type_is_logged_rather_than_silently_ignored(tmp_path):
+    commands = [{"_id": "cmd-1", "type": "do_a_barrel_roll", "payload": {}}]
+    acked = []
+    runtime = _make_idle_runtime(tmp_path, commands, acked)
+    runtime._last_command_poll_monotonic = 0.0
+
+    logger = logging.getLogger("papaya_mission.runtime")
+    records: list[logging.LogRecord] = []
+    handler = logging.Handler()
+    handler.emit = records.append
+    logger.addHandler(handler)
+    try:
+        runtime.tick()
+    finally:
+        logger.removeHandler(handler)
+
+    assert any(
+        record.levelno == logging.WARNING and "do_a_barrel_roll" in record.getMessage()
+        for record in records
+    )
+    assert acked == ["/commands/cmd-1/ack"]
+
+
+def test_malformed_command_does_not_stop_the_tick_or_the_rest_of_the_batch(tmp_path):
+    """Fault isolation is about failures generally, not HTTP failures
+    specifically: a command dict with no "type" raises KeyError inside
+    _handle_command, which the old httpx.HTTPError-only guard let escape
+    and kill the whole tick (and every later command in the batch).
+    """
+    commands = [
+        {"_id": "cmd-bad", "payload": {}},  # no "type" -> KeyError in _handle_command
+        {"_id": "cmd-2", "type": "pause_sweep", "payload": {}},
+    ]
+    acked = []
+    runtime = _make_started_runtime(tmp_path, commands, acked)
+    runtime._last_command_poll_monotonic = 0.0
+
+    runtime.tick()  # must not raise
+
+    assert runtime.sweep_session.status == SweepSessionStatus.INTERRUPTED  # cmd-2 still ran
+    assert acked == ["/commands/cmd-2/ack"]  # the malformed one was never acked
+
+
+def test_start_sweep_with_a_malformed_payload_does_not_raise_out_of_tick(tmp_path):
+    """start_sweep's own failure modes are KeyError (no geofence_id) and
+    ValueError (derive_row_spacing_m rejecting the rover's turn geometry) --
+    neither an httpx.HTTPError, both now covered by the broadened guard.
+    """
+    commands = [{"_id": "cmd-1", "type": "start_sweep", "payload": {}}]
+    acked = []
+    runtime = _make_idle_runtime(tmp_path, commands, acked)
+    runtime._last_command_poll_monotonic = 0.0
+
+    runtime.tick()  # must not raise
+
+    assert runtime.sweep_session is None
+    assert acked == []  # never acked, so the backend can redeliver it
 
 
 def test_pause_command_interrupts_sweep_session_and_acks(tmp_path):

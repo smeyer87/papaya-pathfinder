@@ -534,7 +534,18 @@ class MissionRuntime:
             try:
                 self._handle_command(command)
                 backend_client.ack_command(self.http_client, self.backend_base_url, command["_id"])
-            except httpx.HTTPError:
+            except Exception:
+                # Deliberately broader than httpx.HTTPError. _handle_command
+                # reaches into caller-supplied dicts (command["type"],
+                # payload["geofence_id"]), parses backend GeoJSON via
+                # shape(), and runs derive_row_spacing_m -- KeyError,
+                # ValueError and shapely's own errors are all reachable from
+                # a single malformed command, and none of them is an HTTP
+                # error. Per the Global Constraints' fault-isolation rule one
+                # bad command must not take down the tick (nor the remaining
+                # commands in this batch), so this is one wide net at the one
+                # place a per-command failure can be contained. No ack is
+                # sent on failure, so the backend can redeliver.
                 logger.warning(
                     "failed to handle/ack command %s -- will retry next poll",
                     command.get("_id"), exc_info=True,
@@ -542,7 +553,9 @@ class MissionRuntime:
 
     def _handle_command(self, command: dict[str, Any]) -> None:
         command_type = command["type"]
-        if command_type == "pause_sweep":
+        if command_type == "start_sweep":
+            self.handle_start_sweep(command.get("payload", {}))
+        elif command_type == "pause_sweep":
             if self.sweep_session is not None:
                 self.sweep_session.interrupt(datetime.now(timezone.utc))
                 self._save_sweep_session()
@@ -558,6 +571,16 @@ class MissionRuntime:
             self.exclusion_polygons = [
                 shape(g["boundary"]) for g in all_geofences if g["type"] == "exclusive"
             ]
+        else:
+            # An unknown type is still acked (the caller acks on return), so
+            # the backend stops redelivering it -- but it must be visible in
+            # the log rather than falling off the end of the if-chain in
+            # silence. A silently-dropped command looks identical from the
+            # ground to one that was carried out.
+            logger.warning(
+                "received unhandled command type %r (command %r)",
+                command_type, command.get("_id"),
+            )
 
     def _home_return_sync(self) -> None:
         try:
