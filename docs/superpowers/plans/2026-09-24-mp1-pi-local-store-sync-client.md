@@ -791,7 +791,7 @@ def test_sync_obstacles_pushes_unsynced_records_and_marks_them_synced(conn):
 
     def handler(request: httpx.Request) -> httpx.Response:
         requests_made.append(request)
-        return httpx.Response(200, json={"synced": 1})
+        return httpx.Response(200, json={"received": 1, "inserted": 1})
 
     client = httpx.Client(transport=httpx.MockTransport(handler))
 
@@ -808,7 +808,7 @@ def test_sync_obstacles_with_nothing_unsynced_makes_no_request(conn):
 
     def handler(request: httpx.Request) -> httpx.Response:
         requests_made.append(request)
-        return httpx.Response(200, json={"synced": 0})
+        return httpx.Response(200, json={"received": 0, "inserted": 0})
 
     client = httpx.Client(transport=httpx.MockTransport(handler))
 
@@ -868,7 +868,7 @@ def test_sync_all_calls_sweep_sessions_and_obstacles_before_telemetry(conn):
 
     def handler(request: httpx.Request) -> httpx.Response:
         call_order.append(request.url.path)
-        return httpx.Response(200, json={"synced": 1})
+        return httpx.Response(200, json={"received": 1, "inserted": 1})
 
     client = httpx.Client(transport=httpx.MockTransport(handler))
 
@@ -1061,7 +1061,7 @@ def test_generate_store_and_sync_telemetry_end_to_end():
         assert len(local_store.list_unsynced_telemetry(conn)) == 1
 
         def handler(request: httpx.Request) -> httpx.Response:
-            return httpx.Response(200, json={"synced": 1})
+            return httpx.Response(200, json={"received": 1, "inserted": 1})
 
         client = httpx.Client(transport=httpx.MockTransport(handler))
         count = sync_client.sync_telemetry(conn, client, "http://backend.local:8000")

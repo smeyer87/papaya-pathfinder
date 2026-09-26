@@ -1792,7 +1792,7 @@ def _handler(rover, geofences, commands, sync_calls):
             return httpx.Response(200, json={"status": "acked"})
         if request.url.path.startswith("/sync/"):
             sync_calls.append(request.url.path)
-            return httpx.Response(200, json={"synced": 1})
+            return httpx.Response(200, json={"received": 1, "inserted": 1})
         raise AssertionError(request.url.path)
 
     return handler
