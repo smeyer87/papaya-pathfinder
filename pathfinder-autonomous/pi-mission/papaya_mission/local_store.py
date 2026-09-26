@@ -114,6 +114,7 @@ def save_obstacle(conn: sqlite3.Connection, obstacle: dict[str, Any]) -> None:
             position_lon = excluded.position_lon,
             position_lat = excluded.position_lat,
             position_uncertainty_m = excluded.position_uncertainty_m,
+            type = excluded.type,
             classification_confidence = excluded.classification_confidence,
             detection_method = excluded.detection_method,
             status = excluded.status,

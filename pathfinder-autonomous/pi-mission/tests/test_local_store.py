@@ -100,12 +100,14 @@ def test_saving_an_obstacle_again_refreshes_position_and_confidence(conn):
     refined = _obstacle()
     refined["position"] = (-85.0006, 38.0006)
     refined["classification_confidence"] = 0.95
+    refined["type"] = "utility_pole"
     local_store.save_obstacle(conn, refined)
 
     unsynced = local_store.list_unsynced_obstacles(conn)
     assert len(unsynced) == 1
     assert unsynced[0]["position"] == (-85.0006, 38.0006)
     assert unsynced[0]["classification_confidence"] == 0.95
+    assert unsynced[0]["type"] == "utility_pole"
 
 
 # --- Sweep sessions ------------------------------------------------------
