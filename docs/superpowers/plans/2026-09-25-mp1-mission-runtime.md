@@ -1127,7 +1127,7 @@ git commit -m "feat(pi-mission): auto-resume in-progress sweep session on restar
 - Test: `pathfinder-autonomous/pi-mission/tests/test_runtime_tick_sensing.py`
 
 **Interfaces:**
-- Consumes: `papaya_mission.position_fusion.{GpsFix, ImuReading, PositionEstimate, PositionFusion}`, `papaya_mission.gps_loss_decision.decide_gps_loss_response`, `papaya_mission.exclusion_check.find_intruded_exclusion`, `papaya_mission.exclusion_decision.decide_exclusion_response`, `papaya_mission.obstacle_detection.{obstacle_from_ultrasonic_camera_detection, obstacle_from_bump_contact}`, `papaya_mission.classification.classify_permanence` (called internally by `obstacle_from_ultrasonic_camera_detection`, not directly here), `papaya_mission.resume_validation.reconcile_obstacles`, `papaya_mission.local_store.{save_obstacle, list_unsynced_obstacles}`, `papaya_mission.runtime_config.{GPS_LOSS_GRACE_PERIOD_S, GPS_LOSS_MAX_ERROR_RADIUS_M}`.
+- Consumes: `papaya_mission.position_fusion.{GpsFix, ImuReading, PositionEstimate, PositionFusion}`, `papaya_mission.gps_loss_decision.decide_gps_loss_response`, `papaya_mission.exclusion_check.find_intruded_exclusion`, `papaya_mission.exclusion_decision.decide_exclusion_response`, `papaya_mission.obstacle_detection.{obstacle_from_ultrasonic_camera_detection, obstacle_from_bump_contact}`, `papaya_mission.classification.classify_permanence` (called internally by `obstacle_from_ultrasonic_camera_detection`, not directly here), `papaya_mission.resume_validation.reconcile_obstacles`, `papaya_mission.local_store.{save_obstacle, list_obstacles_for_session}`, `papaya_mission.runtime_config.{GPS_LOSS_GRACE_PERIOD_S, GPS_LOSS_MAX_ERROR_RADIUS_M}`.
 - Produces: `.tick() -> None` — one iteration of the sensing/position/obstacle/exclusion sequence (command handling and telemetry are Task 8). Also produces `.mission_alert: str | None` — set to `"gps_stop_and_alert"` or `"exclusion_wait_for_help"` when either decision function returns its stop branch; the tick loop checks this and Task 8's command handling clears it on an operator response. A resume-validation match distance of 3.0m (matching `resume_validation.reconcile_obstacles`'s own default `match_radius_m`) is used to decide the rover has "arrived" at `._resume_validation_target`.
 
 - [ ] **Step 1: Write the failing tests**
@@ -1364,18 +1364,47 @@ RESUME_VALIDATION_MATCH_RADIUS_M = 3.0
         distance_to_target = flat_earth_distance_m(current_position, self._resume_validation_target)
 
         if distance_to_target <= RESUME_VALIDATION_MATCH_RADIUS_M:
-            known = [
-                self._obstacle_dict_to_domain(o)
-                for o in local_store.list_unsynced_obstacles(self.conn)
-                if o["sweep_session_id"] == self.sweep_session.id
-            ]
+            # Every obstacle known for this session, synced or not. The old
+            # list_unsynced_obstacles filter was wrong here: a Home-return
+            # sync during the interrupted pass marks obstacles synced, and
+            # they would then vanish from the known set, so reconciliation
+            # would treat each one as never-seen.
+            #
+            # Keep the raw store rows, not just the domain objects: Obstacle
+            # has no id field at all (ids are a persistence concern owned by
+            # local_store), so the row is the only place an existing
+            # obstacle's id lives.
+            known_rows = local_store.list_obstacles_for_session(
+                self.conn, self.sweep_session.id
+            )
+            known_id_by_position = {row["position"]: row["id"] for row in known_rows}
+            known = [self._obstacle_dict_to_domain(row) for row in known_rows]
             result = reconcile_obstacles(
                 known_obstacles=known,
                 freshly_detected=self._resume_validation_collected,
                 now=datetime.now(timezone.utc),
             )
             for confirmed in result.confirmed:
-                self._save_obstacle(confirmed)
+                # A confirmed obstacle is a RE-detection of one we already
+                # store a row for, so it must reuse that row's id. That is
+                # what makes save_obstacle's upsert-by-id refresh the record
+                # in place (and re-flag it unsynced); minting a fresh id here
+                # would insert a second row for the same physical obstacle
+                # and defeat the upsert entirely.
+                #
+                # reconcile_obstacles builds each confirmed entry as
+                # dataclasses.replace(known, last_confirmed_at=now), which
+                # changes only that one field -- so the entry's position is
+                # identical to the known obstacle it came from and is a safe
+                # key back to that obstacle's stored id.
+                self._save_obstacle(
+                    confirmed, obstacle_id=known_id_by_position[confirmed.position]
+                )
+            # result.new_detections deliberately needs no save here: each
+            # fresh detection was already persisted with its own new id by
+            # _save_obstacle when _detect_obstacles first saw it this pass.
+            # Saving again would mint a second id and duplicate the row.
+            #
             # `cleared` and `discrepancies` are logged for operator review
             # via telemetry/obstacle status -- no further action in v1.
             self._resume_validation_target = None
@@ -1396,13 +1425,31 @@ RESUME_VALIDATION_MATCH_RADIUS_M = 3.0
             last_confirmed_at=obstacle_dict["last_confirmed_at"],
         )
 
-    def _save_obstacle(self, obstacle) -> None:
+    def _save_obstacle(self, obstacle, *, obstacle_id: str | None = None) -> None:
+        if self.sweep_session is None:
+            # MP-1's obstacle tracking is scoped to sweep sessions: the local
+            # store's obstacles.sweep_session_id is NOT NULL, matching the
+            # backend's non-optional Obstacle.sweep_session_id. An obstacle
+            # met while no session is active -- during transit, or a bump on
+            # the way home -- has no session to attach to, so there is no
+            # valid row to write and we skip persisting it rather than
+            # inserting a null session id the schema rejects.
+            #
+            # This costs nothing operationally: the rover still reacts to the
+            # obstacle through the normal avoidance path on this tick. Only
+            # the durable record is skipped, and a durable record outside a
+            # sweep session has nowhere to be reported to anyway.
+            return
+
         lon, lat = obstacle.position
         local_store.save_obstacle(
             self.conn,
             {
-                "id": str(uuid.uuid4()),
-                "sweep_session_id": self.sweep_session.id if self.sweep_session else None,
+                # A re-detected obstacle passes the id of the row it already
+                # has, so save_obstacle's upsert refreshes that row in place.
+                # A genuinely new detection gets a fresh id.
+                "id": obstacle_id or str(uuid.uuid4()),
+                "sweep_session_id": self.sweep_session.id,
                 "position": (lon, lat),
                 "position_uncertainty_m": obstacle.position_uncertainty_m,
                 "type": obstacle.type,
