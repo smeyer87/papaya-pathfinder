@@ -48,6 +48,13 @@ from papaya_mission.telemetry_record import build_telemetry_record
 RESUME_VALIDATION_MATCH_RADIUS_M = 3.0
 WAYPOINT_ARRIVAL_RADIUS_M = 1.0
 
+# The two values `mission_alert` can hold, named so the set/clear logic can
+# tell WHICH check raised the alert it is looking at. Each check only ever
+# clears its own -- clearing by "is anything set?" would let one subsystem
+# silently cancel another's alert.
+GPS_LOSS_ALERT = "gps_stop_and_alert"
+EXCLUSION_ALERT = "exclusion_wait_for_help"
+
 logger = logging.getLogger("papaya_mission.runtime")
 
 
@@ -260,8 +267,15 @@ class MissionRuntime:
         if self.position_fusion is None:
             seed_fix = gps_fix or GpsFix(lat=0.0, lon=0.0, accuracy_m=999.0, timestamp=imu_reading.timestamp)
             self.position_fusion = PositionFusion(seed_fix)
-            if gps_fix is not None:
-                self._last_gps_fix_monotonic = now_monotonic
+            # The clock starts here whether or not a REAL fix arrived. When it
+            # did not, we are seeding from the dummy (0,0)/999m fix, and
+            # leaving _last_gps_fix_monotonic as None made _check_gps_loss
+            # return immediately forever: a cold boot under tree cover with
+            # zero fixes ever acquired never evaluated GPS-loss safety at all,
+            # however long dead reckoning ran. "Never had a fix" is at least
+            # as unsafe as "just lost one", so it starts the same
+            # grace-period clock rather than disabling the check.
+            self._last_gps_fix_monotonic = now_monotonic
             return
 
         if gps_fix is not None:
@@ -271,7 +285,7 @@ class MissionRuntime:
             self.position_fusion.on_imu_reading(imu_reading)
 
     def _check_gps_loss(self, now_monotonic: float) -> None:
-        if self._last_gps_fix_monotonic is None:
+        if self._last_gps_fix_monotonic is None or self.position_fusion is None:
             return
         seconds_since_last_fix = now_monotonic - self._last_gps_fix_monotonic
         response = decide_gps_loss_response(
@@ -280,8 +294,26 @@ class MissionRuntime:
             grace_period_s=GPS_LOSS_GRACE_PERIOD_S,
             max_error_radius_m=GPS_LOSS_MAX_ERROR_RADIUS_M,
         )
+        # decide_gps_loss_response is re-evaluated from scratch every tick, so
+        # the alert tracks it both ways rather than latching on forever: a
+        # healthy fix resets both the clock and the error radius, at which
+        # point holding the alert would be reporting a condition that has
+        # already resolved. Logging happens only on the TRANSITION, not every
+        # tick, or a held alert would bury the log at tick rate.
         if response == "stop_and_alert":
-            self.mission_alert = "gps_stop_and_alert"
+            if self.mission_alert != GPS_LOSS_ALERT:
+                logger.error(
+                    "GPS loss safety triggered (%.1fs since last fix, error radius %.1fm) "
+                    "-- stop and alert",
+                    seconds_since_last_fix,
+                    self.position_fusion.current_estimate.error_radius_m,
+                )
+            self.mission_alert = GPS_LOSS_ALERT
+        elif self.mission_alert == GPS_LOSS_ALERT:
+            # Only clears an alert THIS check raised. An exclusion alert held
+            # at the same time is none of this check's business.
+            logger.info("GPS loss safety cleared -- fix recovered, resuming normal operation")
+            self.mission_alert = None
 
     def _detect_obstacles(self) -> None:
         ultrasonic = self.sensor_hub.ultrasonic.read()
@@ -462,12 +494,24 @@ class MissionRuntime:
         )
 
     def _check_exclusion_zones(self) -> None:
-        if not self.exclusion_polygons or self.rover is None:
+        if not self.exclusion_polygons or self.rover is None or self.position_fusion is None:
             return
         estimate = self.position_fusion.current_estimate
-        position = (estimate.lon, estimate.lat)
+        position = estimate.as_lon_lat()
         intrusion = find_intruded_exclusion(position, self.exclusion_polygons)
         if intrusion is None:
+            # Out of every exclusion zone -- symmetric with _check_gps_loss,
+            # clear only the alert THIS check raises. Precedence note: this
+            # runs after _check_gps_loss in tick(), so if a GPS-loss alert is
+            # simultaneously active, mission_alert holds GPS_LOSS_ALERT and
+            # this branch is a no-op -- the more severe, more blocking
+            # condition (we do not trust our own position, so we cannot
+            # trust this very intrusion verdict either) stays reported until
+            # GPS recovers. The converse also holds: raising an exclusion
+            # alert below cannot overwrite a GPS alert, for the same reason.
+            if self.mission_alert == EXCLUSION_ALERT:
+                logger.info("exclusion-zone alert cleared -- rover is outside every exclusion zone")
+                self.mission_alert = None
             return
         _exclusion, depth_m = intrusion
         rover_length_m = self.rover.get("length_m")
@@ -475,7 +519,19 @@ class MissionRuntime:
             return
         response = decide_exclusion_response(depth_m, rover_length_m)
         if response == "wait_for_help":
-            self.mission_alert = "exclusion_wait_for_help"
+            if self.mission_alert == GPS_LOSS_ALERT:
+                return  # GPS loss outranks this -- see the precedence note above
+            if self.mission_alert != EXCLUSION_ALERT:
+                logger.error(
+                    "exclusion-zone intrusion %.2fm deep (rover length %.2fm) -- wait for help",
+                    depth_m, rover_length_m,
+                )
+            self.mission_alert = EXCLUSION_ALERT
+        elif self.mission_alert == EXCLUSION_ALERT:
+            # Inside a zone but only shallowly -- auto-reverse handles it, so
+            # the wait-for-help condition itself has resolved.
+            logger.info("exclusion-zone alert cleared -- intrusion is now shallow enough to auto-reverse")
+            self.mission_alert = None
 
     def _check_waypoint_arrival(self) -> None:
         if self.sweep_session is None or self.sweep_session.status != SweepSessionStatus.IN_PROGRESS:
@@ -528,6 +584,11 @@ class MissionRuntime:
             if self.sweep_session is not None
             else -1
         )
+        # "none" rather than omitting the key: build_telemetry_record would
+        # otherwise store the "missing" sentinel, which means "the metric
+        # could not be read", not "there is no alert" -- an important
+        # difference for a safety field.
+        readings["mission_alert"] = self.mission_alert or "none"
 
         drive_status = self.esp32_link.read_drive_status()
         readings["throttle_position"] = drive_status.throttle_position

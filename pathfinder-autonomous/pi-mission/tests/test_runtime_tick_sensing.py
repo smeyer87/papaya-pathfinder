@@ -1,4 +1,5 @@
 # pathfinder-autonomous/pi-mission/tests/test_runtime_tick_sensing.py
+import logging
 from datetime import datetime, timezone
 
 import httpx
@@ -105,6 +106,83 @@ def test_gps_loss_past_grace_period_sets_stop_and_alert(tmp_path):
     assert runtime.mission_alert == "gps_stop_and_alert"
 
 
+def test_gps_never_acquired_still_triggers_stop_and_alert(tmp_path):
+    """Regression test: _check_gps_loss returned immediately while
+    _last_gps_fix_monotonic was None, and _read_position's dummy-seed path
+    (no real fix ever received) deliberately left it None. A cold boot under
+    tree cover with zero real fixes therefore NEVER evaluated GPS-loss
+    safety, no matter how long dead reckoning ran or how large the error
+    radius grew. "Never had a fix" now starts the same clock as "just lost
+    it", so the check evaluates from the first tick onward.
+    """
+    hub = SimulatedSensorHub(INITIAL_IMU)
+    runtime = _make_started_runtime(tmp_path, sensor_hub=hub)
+    assert runtime.position_fusion is None
+
+    for _ in range(3):
+        runtime.tick()  # no GPS fix is ever scripted -- pure dead reckoning
+
+    # The dummy seed's 999m accuracy is already past
+    # GPS_LOSS_MAX_ERROR_RADIUS_M, which is the honest reading: with no fix
+    # ever received the rover genuinely does not know where it is.
+    assert runtime._last_gps_fix_monotonic is not None
+    assert runtime.mission_alert == "gps_stop_and_alert"
+
+
+def test_gps_alert_clears_once_a_healthy_fix_returns(tmp_path):
+    hub = SimulatedSensorHub(INITIAL_IMU)
+    runtime = _make_started_runtime(tmp_path, sensor_hub=hub)
+    hub.script_gps_fix(GpsFix(lat=38.05, lon=-85.0, accuracy_m=2.0, timestamp=0.0))
+    runtime.tick()  # seeds position_fusion from a real fix
+    runtime._last_gps_fix_monotonic -= 31.0  # 31s of silence, past the grace period
+    runtime.tick()
+    assert runtime.mission_alert == "gps_stop_and_alert"
+
+    # A healthy fix resets both the clock and the error radius, so the
+    # condition genuinely no longer holds -- the alert must not stick.
+    hub.script_gps_fix(GpsFix(lat=38.05, lon=-85.0, accuracy_m=1.0, timestamp=1.0))
+    runtime.tick()
+
+    assert runtime.mission_alert is None
+
+
+def test_gps_alert_is_logged_once_on_transition_not_every_held_tick(tmp_path):
+    hub = SimulatedSensorHub(INITIAL_IMU)
+    runtime = _make_started_runtime(tmp_path, sensor_hub=hub)
+    hub.script_gps_fix(GpsFix(lat=38.05, lon=-85.0, accuracy_m=2.0, timestamp=0.0))
+    runtime.tick()
+    runtime._last_gps_fix_monotonic -= 31.0
+
+    logger = logging.getLogger("papaya_mission.runtime")
+    records: list[logging.LogRecord] = []
+    handler = logging.Handler()
+    handler.emit = records.append
+    logger.addHandler(handler)
+    try:
+        for _ in range(3):  # alert raised on the first, held on the rest
+            runtime.tick()
+    finally:
+        logger.removeHandler(handler)
+
+    errors = [r for r in records if r.levelno == logging.ERROR]
+    assert len(errors) == 1  # logged on the transition in, not at tick rate
+    assert "GPS loss safety triggered" in errors[0].getMessage()
+
+
+def test_mission_alert_is_reported_in_telemetry(tmp_path):
+    hub = SimulatedSensorHub(INITIAL_IMU)
+    runtime = _make_started_runtime(tmp_path, sensor_hub=hub)
+    hub.script_gps_fix(GpsFix(lat=38.05, lon=-85.0, accuracy_m=2.0, timestamp=0.0))
+    runtime.tick()
+    runtime._last_gps_fix_monotonic -= 31.0
+
+    runtime._last_telemetry_sample_monotonic = 0.0  # force a sample this tick
+    runtime.tick()
+
+    metrics = local_store.list_unsynced_telemetry(runtime.conn)[-1]["metrics"]
+    assert metrics["mission_alert"] == "gps_stop_and_alert"
+
+
 def test_exclusion_intrusion_sets_wait_for_help_when_deep(tmp_path):
     pond_ring = [[-85.001, 38.049], [-85.001, 38.051], [-84.999, 38.051], [-84.999, 38.049], [-85.001, 38.049]]
     rover = {"_id": "rover-1", "name": "George", "length_m": 0.6, "turn_style": "spin_in_place"}
@@ -123,6 +201,31 @@ def test_exclusion_intrusion_sets_wait_for_help_when_deep(tmp_path):
     runtime.tick()
 
     assert runtime.mission_alert == "exclusion_wait_for_help"
+
+
+def test_exclusion_alert_clears_once_the_rover_leaves_the_zone(tmp_path):
+    pond_ring = [[-85.001, 38.049], [-85.001, 38.051], [-84.999, 38.051], [-84.999, 38.049], [-85.001, 38.049]]
+    rover = {"_id": "rover-1", "name": "George", "length_m": 0.6, "turn_style": "spin_in_place"}
+    inclusive = {"_id": "fence-1", "type": "inclusive", "boundary": {"type": "Polygon", "coordinates": [FIELD_RING]}}
+    exclusive = {"_id": "fence-2", "type": "exclusive", "boundary": {"type": "Polygon", "coordinates": [pond_ring]}}
+    client = httpx.Client(transport=httpx.MockTransport(_handler(rover, [inclusive, exclusive])))
+    hub = SimulatedSensorHub(INITIAL_IMU)
+    runtime = MissionRuntime(
+        rover_id="rover-1", backend_base_url="http://backend.local",
+        local_db_path=str(tmp_path / "test.db"), sensor_hub=hub, esp32_link=FakeEsp32Link(), http_client=client,
+    )
+    runtime.startup()
+    runtime.handle_start_sweep({"geofence_id": "fence-1"})
+    hub.script_gps_fix(GpsFix(lat=38.05, lon=-85.0, accuracy_m=2.0, timestamp=0.0))
+    runtime.tick()
+    assert runtime.mission_alert == "exclusion_wait_for_help"
+
+    # Driven back out of the pond -- the condition no longer holds, so the
+    # alert must not stay latched for the rest of the process.
+    hub.script_gps_fix(GpsFix(lat=38.06, lon=-85.0, accuracy_m=2.0, timestamp=1.0))
+    runtime.tick()
+
+    assert runtime.mission_alert is None
 
 
 RESUME_WAYPOINT_POSITION = (-85.0, 38.0)
