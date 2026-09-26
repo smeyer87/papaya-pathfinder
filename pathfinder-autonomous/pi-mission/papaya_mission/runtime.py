@@ -13,7 +13,7 @@ from typing import Any
 import httpx
 from shapely.geometry import Polygon, shape
 
-from papaya_mission import backend_client, local_store
+from papaya_mission import backend_client, local_store, sync_client
 from papaya_mission.coverage_pattern import generate_coverage_pattern
 from papaya_mission.esp32_link import Esp32Link
 from papaya_mission.exclusion_check import find_intruded_exclusion
@@ -482,6 +482,10 @@ class MissionRuntime:
         if distance <= WAYPOINT_ARRIVAL_RADIUS_M:
             self.sweep_session.mark_waypoint_complete(next_waypoint.order)
             self._save_sweep_session()
+            if self.sweep_session.is_fully_covered:
+                self.sweep_session.complete(datetime.now(timezone.utc))
+                self._save_sweep_session()
+                self._home_return_sync()
 
     def _sample_telemetry_if_due(self, now_monotonic: float) -> None:
         if now_monotonic - self._last_telemetry_sample_monotonic < TELEMETRY_SAMPLE_INTERVAL_S:
@@ -534,11 +538,15 @@ class MissionRuntime:
             if self.sweep_session is not None and self.sweep_session.status == SweepSessionStatus.IN_PROGRESS:
                 self.sweep_session.interrupt(datetime.now(timezone.utc))
                 self._save_sweep_session()
+            self._home_return_sync()
         elif command_type == "update_geofence":
             all_geofences = backend_client.list_geofences(self.http_client, self.backend_base_url)
             self.exclusion_polygons = [
                 shape(g["boundary"]) for g in all_geofences if g["type"] == "exclusive"
             ]
+
+    def _home_return_sync(self) -> None:
+        sync_client.sync_all(self.conn, self.http_client, self.backend_base_url)
 
     def _handle_resume_sweep(self) -> None:
         status = self.esp32_link.status()

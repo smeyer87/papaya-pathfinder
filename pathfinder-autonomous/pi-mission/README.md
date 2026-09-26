@@ -84,3 +84,20 @@ heading before placing the obstacle.
   backend's `/sync/*` endpoints at a Home-return checkpoint. Tests run
   against `httpx.MockTransport`, not a live server -- no MongoDB or
   running backend needed to build or test this module.
+
+## Mission Runtime
+
+`python -m papaya_mission` runs the mission loop. Requires `.env` with
+`ROVER_ID`, `BACKEND_BASE_URL` (the running Backend Core service), and
+`LOCAL_DB_PATH` (SQLite file path — created if absent).
+
+Currently wired to `SimulatedSensorHub` and a fake `Esp32Link` — real
+hardware drivers (GPS/IMU/ultrasonic/camera modules, the actual
+UART/I2C link to the ESP32) are a future hardware-integration pass, not
+part of this plan. `runtime.py`'s `MissionRuntime` takes both as
+constructor arguments specifically so real drivers can be swapped in
+later without touching orchestration logic.
+
+Per-tick duration is logged; a warning means a tick exceeded its
+`TICK_HZ` budget — see the MP-1 Mission Runtime design notes' "Scaling
+note" for what that means and what to do about it.
