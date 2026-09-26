@@ -94,6 +94,20 @@ def test_updating_a_synced_obstacle_marks_it_unsynced_again(conn):
     assert unsynced[0]["status"] == "permanent-confirmed"
 
 
+def test_saving_an_obstacle_again_refreshes_position_and_confidence(conn):
+    local_store.save_obstacle(conn, _obstacle())
+
+    refined = _obstacle()
+    refined["position"] = (-85.0006, 38.0006)
+    refined["classification_confidence"] = 0.95
+    local_store.save_obstacle(conn, refined)
+
+    unsynced = local_store.list_unsynced_obstacles(conn)
+    assert len(unsynced) == 1
+    assert unsynced[0]["position"] == (-85.0006, 38.0006)
+    assert unsynced[0]["classification_confidence"] == 0.95
+
+
 # --- Sweep sessions ------------------------------------------------------
 
 def test_save_and_list_unsynced_sweep_session(conn):
