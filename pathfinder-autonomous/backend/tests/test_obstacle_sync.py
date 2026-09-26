@@ -113,6 +113,12 @@ def test_list_pending_review_returns_only_permanent_pending_awaiting_review(db):
     pending = obstacle_service.list_pending_review(db)
 
     assert [o.id for o in pending] == ["obs-1"]
+    # BSON has no timezone, and pymongo hands datetimes back NAIVE unless the
+    # client is built with tz_aware=True. A naive first_detected_at serialises
+    # without a Z/offset, so a UI is free to read this Pi-supplied UTC instant
+    # as local time. Assert the round trip keeps the zone.
+    assert pending[0].first_detected_at.tzinfo is not None
+    assert pending[0].first_detected_at == DETECTED_AT
 
 
 def test_obstacle_position_supports_geospatial_query(db):

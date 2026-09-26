@@ -20,10 +20,19 @@ def get_client() -> MongoClient:
 
     MONGO_URI is required -- no fallback to a local mongod, so a missing .env
     fails loudly instead of silently pointing at the wrong database.
+
+    tz_aware=True because BSON stores datetimes as UTC milliseconds with no
+    zone, and pymongo's default is to hand them back timezone-NAIVE. Every
+    datetime this service stores is UTC (Pi-supplied timestamps like an
+    obstacle's first_detected_at, and backend-set ones like Rover.created_at),
+    so a naive read-back silently drops that fact: FastAPI then serialises it
+    without a Z/offset and a UI is free to read it as local time. Setting it on
+    the client makes it uniform for every collection and every caller, rather
+    than something each read site has to remember.
     """
     global _client
     if _client is None:
-        _client = MongoClient(os.environ["MONGO_URI"])
+        _client = MongoClient(os.environ["MONGO_URI"], tz_aware=True)
     return _client
 
 

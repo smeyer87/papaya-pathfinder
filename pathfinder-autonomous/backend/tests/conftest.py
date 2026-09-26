@@ -13,7 +13,9 @@ TEST_DB_NAME = "papaya_pathfinder_test"
 
 @pytest.fixture
 def db():
-    mongo_client = MongoClient(TEST_MONGO_URI)
+    # tz_aware=True mirrors app.db.get_client() -- without it, tests would read
+    # back timezone-naive datetimes the application never sees.
+    mongo_client = MongoClient(TEST_MONGO_URI, tz_aware=True)
     database = mongo_client[TEST_DB_NAME]
     ensure_indexes(database)
     yield database
