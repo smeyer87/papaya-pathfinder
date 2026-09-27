@@ -159,8 +159,10 @@ runtime = MissionRuntime(
 )
 runtime.startup()
 for _ in range(50):
-    world.point_mast_at(0.0)  # force the sweep to look forward this tick
     world.step(dt_s=0.5, heading_deg=0.0, speed_mps=1.0)
+    world.point_mast_at(0.0)  # force the sweep to look forward this tick --
+                              # must come after step(), or step()'s autonomous
+                              # sweep advance immediately overwrites it
     runtime.tick()
 # assert the obstacle got recorded, mission_alert set appropriately, etc.
 ```

@@ -1,5 +1,7 @@
 import math
 
+import pytest
+
 from papaya_mission.digital_twin import TwinObstacle, TwinWorld
 from papaya_mission.geo_utils import flat_earth_distance_m, project_position
 
@@ -107,6 +109,39 @@ def test_moving_away_and_back_retriggers_bump_contact():
     assert len(world._pending_bump_events) == 2
 
 
+def test_replacing_obstacle_with_a_new_object_at_the_same_spot_retriggers_bump():
+    # Regression test for the _contacted_obstacles id-reuse bug: tracking
+    # touched obstacles by id(obstacle) in a set[int] could silently miss a
+    # new bump if CPython happened to reuse a freed obstacle's memory
+    # address for a brand-new TwinObstacle placed at the same collision
+    # point. Identity-based tracking (a list of real references) sidesteps
+    # this entirely, since a live reference can never have its id recycled.
+    world = TwinWorld(start_lat=38.0, start_lon=-85.0)
+    obstacle_lat, obstacle_lon = project_position(38.0, -85.0, bearing_deg=0.0, distance_m=1.0)
+    old_obstacle = TwinObstacle(
+        lat=obstacle_lat, lon=obstacle_lon, collision_radius_m=0.5,
+        classified_type="unknown", classification_confidence=0.0,
+    )
+    world.obstacles.append(old_obstacle)
+    world.step(dt_s=1.0, heading_deg=0.0, speed_mps=1.0)  # contact #1
+    assert len(world._pending_bump_events) == 1
+    world.clear_halt()
+
+    # Scenario clears the obstacle list and replaces it with a brand-new
+    # TwinObstacle at the exact same collision point -- the rover never
+    # leaves the collision radius, but this is logically a new obstacle.
+    del old_obstacle
+    world.obstacles.clear()
+    new_obstacle = TwinObstacle(
+        lat=obstacle_lat, lon=obstacle_lon, collision_radius_m=0.5,
+        classified_type="unknown", classification_confidence=0.0,
+    )
+    world.obstacles.append(new_obstacle)
+
+    world.step(dt_s=0.0, heading_deg=0.0, speed_mps=0.0)  # re-check contacts, no movement
+    assert len(world._pending_bump_events) == 2
+
+
 def test_bearing_and_range_to_matches_project_position_inverse():
     world = TwinWorld(start_lat=38.0, start_lon=-85.0)
     target_lat, target_lon = project_position(38.0, -85.0, bearing_deg=30.0, distance_m=50.0)
@@ -177,7 +212,36 @@ def test_drive_route_arrives_near_each_waypoint_in_order():
     assert flat_earth_distance_m((world.lon, world.lat), (waypoint_b[1], waypoint_b[0])) < 2.0
 
 
-from papaya_mission.geo_utils import METERS_PER_DEGREE_LAT
+def test_drive_route_raises_on_non_positive_speed_or_dt():
+    world = TwinWorld(start_lat=38.0, start_lon=-85.0)
+    waypoint = project_position(38.0, -85.0, bearing_deg=0.0, distance_m=10.0)
+
+    with pytest.raises(ValueError):
+        world.drive_route([waypoint], speed_mps=0.0, dt_s=1.0)
+
+    with pytest.raises(ValueError):
+        world.drive_route([waypoint], speed_mps=-1.0, dt_s=1.0)
+
+    with pytest.raises(ValueError):
+        world.drive_route([waypoint], speed_mps=1.0, dt_s=0.0)
+
+
+def test_drive_route_stops_immediately_when_halted_on_contact_mid_route():
+    world = TwinWorld(start_lat=38.0, start_lon=-85.0)
+    obstacle_lat, obstacle_lon = project_position(38.0, -85.0, bearing_deg=0.0, distance_m=3.0)
+    world.obstacles.append(TwinObstacle(
+        lat=obstacle_lat, lon=obstacle_lon, collision_radius_m=0.5,
+        classified_type="unknown", classification_confidence=0.0,
+    ))
+    waypoint_a = project_position(38.0, -85.0, bearing_deg=0.0, distance_m=10.0)  # past the obstacle
+    waypoint_b = project_position(*waypoint_a, bearing_deg=90.0, distance_m=10.0)
+
+    world.drive_route([waypoint_a, waypoint_b], speed_mps=1.0, dt_s=1.0)
+
+    assert world._halted_on_contact is True
+    # Never got close to waypoint_b -- drive_route abandoned it on the halt.
+    distance_to_b = flat_earth_distance_m((world.lon, world.lat), (waypoint_b[1], waypoint_b[0]))
+    assert distance_to_b > 5.0
 
 
 def test_gps_unavailable_returns_none():

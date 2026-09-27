@@ -11,6 +11,19 @@ not autonomous -- nothing in the codebase commands rover movement yet
 channel is the ESP32 firmware plan's job to define). The ultrasonic+camera
 mast, like the ESP32's bump-safety interrupt, has no Pi command either, so
 it sweeps autonomously every step() call.
+
+Unlike SimulatedSensorHub's consume-once scripted fields, the twin's
+ultrasonic/camera sources are stateless derivations from world state: they
+report an in-view obstacle fresh on every single read, for as long as it
+stays inside the mast's beam and range -- not just once.
+MissionRuntime._detect_obstacles (unmodified, existing code) has no
+per-tick deduplication of its own, so a scenario that leaves an obstacle in view
+across multiple ticks will see one new saved obstacle row per tick it was
+detected, not one row total. This is existing MissionRuntime behavior, not
+something the twin works around -- a scenario author who wants exactly one
+saved row should either point the mast away after the first detecting
+tick, or assert on "at least one row of the right type" rather than
+"exactly one row."
 """
 from __future__ import annotations
 
@@ -66,8 +79,14 @@ class _TwinImuSource:
         self._world = world
 
     def read(self) -> ImuReading:
+        # heading_deg % 360.0, not the raw attribute: step() normalizes
+        # into [0, 360) when it sets self.heading_deg, but world.heading_deg
+        # is a public, directly-mutable attribute (scenario/test code does
+        # assign to it directly), and ImuReading.__post_init__ raises
+        # ValueError if heading_deg is ever out of [0.0, 360.0). Normalizing
+        # here means a read can never crash for that reason.
         return ImuReading(
-            heading_deg=self._world.heading_deg,
+            heading_deg=self._world.heading_deg % 360.0,
             forward_acceleration_mps2=self._world._acceleration_mps2,
             timestamp=self._world.clock_s,
         )
@@ -172,10 +191,22 @@ class TwinWorld:
         self.max_speed_mps = max_speed_mps
 
         self.obstacles: list[TwinObstacle] = []
+        # Scenario-side bookkeeping only -- nothing in digital_twin.py ever
+        # reads this. It exists so a scenario can hand the same Polygon
+        # list to other production code (e.g. find_intruded_exclusion)
+        # alongside the twin; appending to it has no effect on the twin's
+        # own behavior.
         self.exclusion_zones: list[Polygon] = []
 
         self._halted_on_contact = False
-        self._contacted_obstacle_ids: set[int] = set()
+        # Real references (not id()s) on purpose: CPython reuses freed
+        # memory addresses, so a set of id(obstacle) can collide between an
+        # already-removed obstacle and a brand-new one placed at the same
+        # collision point (e.g. a scenario clears world.obstacles and
+        # appends a fresh TwinObstacle) and silently swallow a new bump
+        # event. Holding the actual object keeps its id alive and
+        # comparisons are done via identity (`is`), not id() hashing.
+        self._contacted_obstacles: list[TwinObstacle] = []
         self._pending_bump_events: list[BumpEvent] = []
         self.geofence_updates_sent: list[list[str]] = []
         self.ota_triggers: list[str] = []
@@ -203,12 +234,31 @@ class TwinWorld:
         self._check_bump_contacts()
 
     def point_mast_at(self, relative_deg: float) -> None:
+        """Force the mast to point at relative_deg (clamped to
+        +/-mast_sweep_limit_deg), overriding the autonomous sweep for this
+        tick's sensor reads.
+
+        Ordering matters: step() unconditionally advances the autonomous
+        mast sweep (_advance_mast) on every call, so calling point_mast_at()
+        *before* step() gets immediately undone by that tick's sweep
+        advance -- the mast will NOT end up pointed where you asked. Call
+        this *after* this tick's step() (or don't call step() at all this
+        tick), immediately before the sensor reads that depend on the mast
+        angle (i.e. right before runtime.tick()).
+        """
         self.mast_angle_deg = max(-self.mast_sweep_limit_deg, min(self.mast_sweep_limit_deg, relative_deg))
 
     def clear_halt(self) -> None:
         self._halted_on_contact = False
 
     def _advance_mast(self, dt_s: float) -> None:
+        # Caveat at extreme parameters: if mast_turn_rate_dps * dt_s exceeds
+        # roughly 2 * mast_sweep_limit_deg, the clamp-and-reverse below can
+        # bounce the mast between its two endpoints every tick without ever
+        # passing through intermediate angles (e.g. never pointing dead
+        # ahead). Harmless at the plan's documented defaults (30 dps, 60
+        # deg limit, typical dt_s ~0.1-1.0s) -- just don't reintroduce it
+        # silently if these parameters change.
         self.mast_angle_deg += self._mast_direction * self.mast_turn_rate_dps * dt_s
         if self.mast_angle_deg >= self.mast_sweep_limit_deg:
             self.mast_angle_deg = self.mast_sweep_limit_deg
@@ -223,15 +273,15 @@ class TwinWorld:
         # inside its collision_radius_m. Not modeled -- MP1_EXPECTED speeds
         # are low enough, relative to step size, that this hasn't mattered.
         now = self._start_time + timedelta(seconds=self.clock_s)
-        still_touching: set[int] = set()
+        still_touching: list[TwinObstacle] = []
         for obstacle in self.obstacles:
             distance_m = flat_earth_distance_m((self.lon, self.lat), (obstacle.lon, obstacle.lat))
             if distance_m <= obstacle.collision_radius_m:
-                still_touching.add(id(obstacle))
-                if id(obstacle) not in self._contacted_obstacle_ids:
+                still_touching.append(obstacle)
+                if not any(o is obstacle for o in self._contacted_obstacles):
                     self._pending_bump_events.append(BumpEvent(detected_at=now))
                     self._halted_on_contact = True
-        self._contacted_obstacle_ids = still_touching
+        self._contacted_obstacles = still_touching
 
     def _bearing_and_range_to(self, target_lat: float, target_lon: float) -> tuple[float, float]:
         """Inverts geo_utils.project_position: given a point this world
@@ -273,11 +323,22 @@ class TwinWorld:
         recomputed from position each step, so it can overshoot a waypoint
         by up to one step's travel distance before moving on to the next.
         """
+        step_distance_m = speed_mps * dt_s
+        if step_distance_m <= 0:
+            raise ValueError(
+                f"drive_route requires speed_mps * dt_s > 0 to make progress "
+                f"toward a waypoint (got speed_mps={speed_mps!r}, dt_s={dt_s!r}); "
+                f"the loop would never terminate otherwise."
+            )
         for target_lat, target_lon in waypoints:
             remaining_m = flat_earth_distance_m((self.lon, self.lat), (target_lon, target_lat))
-            step_distance_m = speed_mps * dt_s
             while remaining_m > 1e-6:
                 relative_bearing_deg, _ = self._bearing_and_range_to(target_lat, target_lon)
                 absolute_heading_deg = (self.heading_deg + relative_bearing_deg) % 360.0
                 self.step(dt_s, heading_deg=absolute_heading_deg, speed_mps=speed_mps)
+                if self._halted_on_contact:
+                    # A bump halt froze position this tick (see step()) --
+                    # keep iterating and we'd silently "complete" the route
+                    # without ever having arrived. Abandon remaining waypoints.
+                    return
                 remaining_m -= step_distance_m
