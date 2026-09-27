@@ -175,3 +175,73 @@ def test_drive_route_arrives_near_each_waypoint_in_order():
     world.drive_route([waypoint_a, waypoint_b], speed_mps=2.0, dt_s=1.0)
 
     assert flat_earth_distance_m((world.lon, world.lat), (waypoint_b[1], waypoint_b[0])) < 2.0
+
+
+from papaya_mission.geo_utils import METERS_PER_DEGREE_LAT
+
+
+def test_gps_unavailable_returns_none():
+    world = TwinWorld(start_lat=38.0, start_lon=-85.0)
+    world.gps_available = False
+
+    assert world.sensor_hub.gps.read() is None
+
+
+def test_gps_reading_wanders_within_accuracy_but_never_exact():
+    world = TwinWorld(start_lat=38.0, start_lon=-85.0, gps_accuracy_m=5.0, rng_seed=42)
+
+    readings = [world.sensor_hub.gps.read() for _ in range(20)]
+
+    assert all(r is not None for r in readings)
+    assert all(r.accuracy_m == 5.0 for r in readings)
+    for r in readings:
+        error_m = flat_earth_distance_m((world.lon, world.lat), (r.lon, r.lat))
+        assert error_m <= 5.0 + 1e-9
+    # Not every reading is the true position -- it genuinely wanders.
+    assert any((r.lat, r.lon) != (world.lat, world.lon) for r in readings)
+
+
+def test_gps_reading_is_reproducible_for_the_same_seed():
+    world_a = TwinWorld(start_lat=38.0, start_lon=-85.0, rng_seed=7)
+    world_b = TwinWorld(start_lat=38.0, start_lon=-85.0, rng_seed=7)
+
+    readings_a = [world_a.sensor_hub.gps.read() for _ in range(5)]
+    readings_b = [world_b.sensor_hub.gps.read() for _ in range(5)]
+
+    assert readings_a == readings_b
+
+
+def test_imu_reflects_current_heading_and_derived_acceleration():
+    world = TwinWorld(start_lat=38.0, start_lon=-85.0)
+    world.step(dt_s=1.0, heading_deg=45.0, speed_mps=2.0)
+
+    reading = world.sensor_hub.imu.read()
+
+    assert reading.heading_deg == 45.0
+    assert reading.forward_acceleration_mps2 == 2.0
+    assert reading.timestamp == world.clock_s
+
+
+def test_ultrasonic_and_camera_agree_on_the_same_in_view_obstacle():
+    world = TwinWorld(start_lat=38.0, start_lon=-85.0)
+    obstacle_lat, obstacle_lon = project_position(38.0, -85.0, bearing_deg=0.0, distance_m=3.0)
+    world.obstacles.append(TwinObstacle(
+        lat=obstacle_lat, lon=obstacle_lon, collision_radius_m=0.3,
+        classified_type="barrel", classification_confidence=0.9,
+    ))
+    world.point_mast_at(0.0)
+
+    detection = world.sensor_hub.ultrasonic.read()
+    classification = world.sensor_hub.camera.read()
+
+    assert detection is not None
+    assert detection.relative_bearing_deg == world.mast_angle_deg
+    assert math.isclose(detection.range_m, 3.0, rel_tol=1e-6)
+    assert classification == ("barrel", 0.9)
+
+
+def test_ultrasonic_and_camera_both_none_when_nothing_in_view():
+    world = TwinWorld(start_lat=38.0, start_lon=-85.0)
+
+    assert world.sensor_hub.ultrasonic.read() is None
+    assert world.sensor_hub.camera.read() is None

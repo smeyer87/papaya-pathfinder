@@ -24,6 +24,8 @@ from shapely.geometry import Polygon
 from papaya_mission import geo_utils
 from papaya_mission.esp32_link import BumpEvent
 from papaya_mission.geo_utils import flat_earth_distance_m, project_position
+from papaya_mission.position_fusion import GpsFix, ImuReading
+from papaya_mission.sensor_hub import ObstacleDetection
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -33,6 +35,73 @@ class TwinObstacle:
     collision_radius_m: float
     classified_type: str
     classification_confidence: float
+
+
+class _TwinGpsSource:
+    def __init__(self, world: TwinWorld) -> None:
+        self._world = world
+
+    def read(self) -> GpsFix | None:
+        if not self._world.gps_available:
+            return None
+        # Uniform sample inside a disk of radius gps_accuracy_m: sqrt(random())
+        # for the radius (not a plain uniform radius, which would bias
+        # samples toward the center) and a uniform angle.
+        radius_m = self._world.gps_accuracy_m * math.sqrt(self._world._rng.random())
+        angle_rad = self._world._rng.uniform(0.0, 2 * math.pi)
+        north_m = radius_m * math.cos(angle_rad)
+        east_m = radius_m * math.sin(angle_rad)
+        offset_lat = north_m / geo_utils.METERS_PER_DEGREE_LAT
+        offset_lon = east_m / (geo_utils.METERS_PER_DEGREE_LAT * math.cos(math.radians(self._world.lat)))
+        return GpsFix(
+            lat=self._world.lat + offset_lat,
+            lon=self._world.lon + offset_lon,
+            accuracy_m=self._world.gps_accuracy_m,
+            timestamp=self._world.clock_s,
+        )
+
+
+class _TwinImuSource:
+    def __init__(self, world: TwinWorld) -> None:
+        self._world = world
+
+    def read(self) -> ImuReading:
+        return ImuReading(
+            heading_deg=self._world.heading_deg,
+            forward_acceleration_mps2=self._world._acceleration_mps2,
+            timestamp=self._world.clock_s,
+        )
+
+
+class _TwinUltrasonicSource:
+    def __init__(self, world: TwinWorld) -> None:
+        self._world = world
+
+    def read(self) -> ObstacleDetection | None:
+        obstacle = self._world._obstacle_in_view()
+        if obstacle is None:
+            return None
+        _, range_m = self._world._bearing_and_range_to(obstacle.lat, obstacle.lon)
+        return ObstacleDetection(relative_bearing_deg=self._world.mast_angle_deg, range_m=range_m)
+
+
+class _TwinCameraSource:
+    def __init__(self, world: TwinWorld) -> None:
+        self._world = world
+
+    def read(self) -> tuple[str, float] | None:
+        obstacle = self._world._obstacle_in_view()
+        if obstacle is None:
+            return None
+        return (obstacle.classified_type, obstacle.classification_confidence)
+
+
+class _TwinSensorHub:
+    def __init__(self, world: TwinWorld) -> None:
+        self.gps = _TwinGpsSource(world)
+        self.imu = _TwinImuSource(world)
+        self.ultrasonic = _TwinUltrasonicSource(world)
+        self.camera = _TwinCameraSource(world)
 
 
 class TwinWorld:
@@ -85,6 +154,7 @@ class TwinWorld:
         self._pending_bump_events: list[BumpEvent] = []
         self.geofence_updates_sent: list[list[str]] = []
         self.ota_triggers: list[str] = []
+        self.sensor_hub = _TwinSensorHub(self)
 
     def step(self, dt_s: float, heading_deg: float, speed_mps: float) -> None:
         self.clock_s += dt_s
