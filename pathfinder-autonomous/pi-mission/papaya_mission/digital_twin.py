@@ -181,6 +181,7 @@ class TwinWorld:
             remaining_m = flat_earth_distance_m((self.lon, self.lat), (target_lon, target_lat))
             step_distance_m = speed_mps * dt_s
             while remaining_m > 1e-6:
-                bearing_deg, _ = self._bearing_and_range_to(target_lat, target_lon)
-                self.step(dt_s, heading_deg=bearing_deg, speed_mps=speed_mps)
+                relative_bearing_deg, _ = self._bearing_and_range_to(target_lat, target_lon)
+                absolute_heading_deg = (self.heading_deg + relative_bearing_deg) % 360.0
+                self.step(dt_s, heading_deg=absolute_heading_deg, speed_mps=speed_mps)
                 remaining_m -= step_distance_m
