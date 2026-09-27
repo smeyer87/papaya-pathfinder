@@ -22,7 +22,7 @@ from datetime import datetime, timedelta, timezone
 from shapely.geometry import Polygon
 
 from papaya_mission import geo_utils
-from papaya_mission.esp32_link import BumpEvent
+from papaya_mission.esp32_link import BumpEvent, DriveStatus, Esp32Status
 from papaya_mission.geo_utils import flat_earth_distance_m, project_position
 from papaya_mission.position_fusion import GpsFix, ImuReading
 from papaya_mission.sensor_hub import ObstacleDetection
@@ -104,6 +104,31 @@ class _TwinSensorHub:
         self.camera = _TwinCameraSource(world)
 
 
+class _TwinEsp32Link:
+    def __init__(self, world: TwinWorld) -> None:
+        self._world = world
+
+    def poll_bump_events(self) -> list[BumpEvent]:
+        events, self._world._pending_bump_events = self._world._pending_bump_events, []
+        return events
+
+    def status(self) -> Esp32Status:
+        return Esp32Status(halted_on_contact=self._world._halted_on_contact)
+
+    def read_drive_status(self) -> DriveStatus:
+        # No steering-servo model exists yet -- same "placeholder pending
+        # final wiring" caveat as esp32_link.py's own DriveStatus docstring.
+        throttle = self._world.speed_mps / self._world.max_speed_mps
+        throttle = max(-1.0, min(1.0, throttle))
+        return DriveStatus(servo_positions_deg={}, throttle_position=throttle)
+
+    def send_geofence_update(self, exclusion_zone_ids: list[str]) -> None:
+        self._world.geofence_updates_sent.append(exclusion_zone_ids)
+
+    def trigger_ota(self, firmware_path: str) -> None:
+        self._world.ota_triggers.append(firmware_path)
+
+
 class TwinWorld:
     def __init__(
         self,
@@ -155,6 +180,7 @@ class TwinWorld:
         self.geofence_updates_sent: list[list[str]] = []
         self.ota_triggers: list[str] = []
         self.sensor_hub = _TwinSensorHub(self)
+        self.esp32_link = _TwinEsp32Link(self)
 
     def step(self, dt_s: float, heading_deg: float, speed_mps: float) -> None:
         self.clock_s += dt_s

@@ -245,3 +245,60 @@ def test_ultrasonic_and_camera_both_none_when_nothing_in_view():
 
     assert world.sensor_hub.ultrasonic.read() is None
     assert world.sensor_hub.camera.read() is None
+
+
+def test_poll_bump_events_drains_the_pending_queue():
+    world = TwinWorld(start_lat=38.0, start_lon=-85.0)
+    obstacle_lat, obstacle_lon = project_position(38.0, -85.0, bearing_deg=0.0, distance_m=1.0)
+    world.obstacles.append(TwinObstacle(
+        lat=obstacle_lat, lon=obstacle_lon, collision_radius_m=0.5,
+        classified_type="unknown", classification_confidence=0.0,
+    ))
+    world.step(dt_s=1.0, heading_deg=0.0, speed_mps=1.0)  # triggers one bump event
+
+    events = world.esp32_link.poll_bump_events()
+    assert len(events) == 1
+    assert world.esp32_link.poll_bump_events() == []
+
+
+def test_status_reflects_halted_on_contact_until_cleared():
+    world = TwinWorld(start_lat=38.0, start_lon=-85.0)
+    assert world.esp32_link.status().halted_on_contact is False
+
+    obstacle_lat, obstacle_lon = project_position(38.0, -85.0, bearing_deg=0.0, distance_m=1.0)
+    world.obstacles.append(TwinObstacle(
+        lat=obstacle_lat, lon=obstacle_lon, collision_radius_m=0.5,
+        classified_type="unknown", classification_confidence=0.0,
+    ))
+    world.step(dt_s=1.0, heading_deg=0.0, speed_mps=1.0)
+    assert world.esp32_link.status().halted_on_contact is True
+
+    world.clear_halt()
+    assert world.esp32_link.status().halted_on_contact is False
+
+
+def test_read_drive_status_normalizes_speed_against_max_speed():
+    world = TwinWorld(start_lat=38.0, start_lon=-85.0, max_speed_mps=2.0)
+    world.step(dt_s=1.0, heading_deg=0.0, speed_mps=1.0)
+
+    status = world.esp32_link.read_drive_status()
+
+    assert status.servo_positions_deg == {}
+    assert status.throttle_position == 0.5
+
+
+def test_read_drive_status_clamps_throttle_to_one():
+    world = TwinWorld(start_lat=38.0, start_lon=-85.0, max_speed_mps=1.0)
+    world.step(dt_s=1.0, heading_deg=0.0, speed_mps=5.0)  # scenario asked for more than max_speed_mps
+
+    assert world.esp32_link.read_drive_status().throttle_position == 1.0
+
+
+def test_send_geofence_update_and_trigger_ota_are_recorded():
+    world = TwinWorld(start_lat=38.0, start_lon=-85.0)
+
+    world.esp32_link.send_geofence_update(["zone-1"])
+    world.esp32_link.trigger_ota("/firmware/v2.bin")
+
+    assert world.geofence_updates_sent == [["zone-1"]]
+    assert world.ota_triggers == ["/firmware/v2.bin"]
