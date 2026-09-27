@@ -14,12 +14,14 @@ it sweeps autonomously every step() call.
 """
 from __future__ import annotations
 
+import math
 import random
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from shapely.geometry import Polygon
 
+from papaya_mission import geo_utils
 from papaya_mission.esp32_link import BumpEvent
 from papaya_mission.geo_utils import flat_earth_distance_m, project_position
 
@@ -134,3 +136,51 @@ class TwinWorld:
                     self._pending_bump_events.append(BumpEvent(detected_at=now))
                     self._halted_on_contact = True
         self._contacted_obstacle_ids = still_touching
+
+    def _bearing_and_range_to(self, target_lat: float, target_lon: float) -> tuple[float, float]:
+        """Inverts geo_utils.project_position: given a point this world
+        already knows the absolute position of (an obstacle, a waypoint),
+        returns the bearing relative to the rover's current heading and the
+        range in meters. Nothing in production code needs this direction --
+        obstacle_detection.py only ever goes bearing+range -> position,
+        since a real rover never has ground truth for an object's position
+        before detecting it. The twin has ground truth, so it needs the
+        reverse to decide what a sensor would currently see.
+        """
+        lat_rad = math.radians(self.lat)
+        dlat_m = (target_lat - self.lat) * geo_utils.METERS_PER_DEGREE_LAT
+        dlon_m = (target_lon - self.lon) * geo_utils.METERS_PER_DEGREE_LAT * math.cos(lat_rad)
+        absolute_bearing_deg = math.degrees(math.atan2(dlon_m, dlat_m)) % 360.0
+        relative_bearing_deg = (absolute_bearing_deg - self.heading_deg + 180.0) % 360.0 - 180.0
+        range_m = flat_earth_distance_m((self.lon, self.lat), (target_lon, target_lat))
+        return relative_bearing_deg, range_m
+
+    def _obstacle_in_view(self) -> TwinObstacle | None:
+        best: tuple[float, TwinObstacle] | None = None
+        for obstacle in self.obstacles:
+            relative_bearing_deg, range_m = self._bearing_and_range_to(obstacle.lat, obstacle.lon)
+            if range_m > self.max_ultrasonic_range_m:
+                continue
+            angle_off_mast = (relative_bearing_deg - self.mast_angle_deg + 180.0) % 360.0 - 180.0
+            if abs(angle_off_mast) > self.mast_beam_half_angle_deg:
+                continue
+            if best is None or range_m < best[0]:
+                best = (range_m, obstacle)
+        return best[1] if best is not None else None
+
+    def drive_route(self, waypoints: list[tuple[float, float]], speed_mps: float, dt_s: float) -> None:
+        """Repeatedly steps toward each (lat, lon) waypoint in order at
+        speed_mps, turning to face each new target exactly at its start --
+        a convenience for scenarios that would rather not hand-compute
+        per-leg headings themselves. Not a real path planner: distance
+        remaining is decremented by a fixed step size rather than
+        recomputed from position each step, so it can overshoot a waypoint
+        by up to one step's travel distance before moving on to the next.
+        """
+        for target_lat, target_lon in waypoints:
+            remaining_m = flat_earth_distance_m((self.lon, self.lat), (target_lon, target_lat))
+            step_distance_m = speed_mps * dt_s
+            while remaining_m > 0:
+                bearing_deg, _ = self._bearing_and_range_to(target_lat, target_lon)
+                self.step(dt_s, heading_deg=bearing_deg, speed_mps=speed_mps)
+                remaining_m -= step_distance_m

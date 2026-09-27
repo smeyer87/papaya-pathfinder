@@ -105,3 +105,73 @@ def test_moving_away_and_back_retriggers_bump_contact():
 
     world.step(dt_s=1.0, heading_deg=0.0, speed_mps=2.0)  # drive back in -- contact #2
     assert len(world._pending_bump_events) == 2
+
+
+def test_bearing_and_range_to_matches_project_position_inverse():
+    world = TwinWorld(start_lat=38.0, start_lon=-85.0)
+    target_lat, target_lon = project_position(38.0, -85.0, bearing_deg=30.0, distance_m=50.0)
+
+    relative_bearing_deg, range_m = world._bearing_and_range_to(target_lat, target_lon)
+
+    assert math.isclose(relative_bearing_deg, 30.0, abs_tol=1e-6)  # heading_deg is 0.0 by default
+    assert math.isclose(range_m, 50.0, rel_tol=1e-6)
+
+
+def test_bearing_and_range_to_is_relative_to_current_heading():
+    world = TwinWorld(start_lat=38.0, start_lon=-85.0)
+    world.heading_deg = 30.0
+    target_lat, target_lon = project_position(38.0, -85.0, bearing_deg=30.0, distance_m=50.0)
+
+    relative_bearing_deg, range_m = world._bearing_and_range_to(target_lat, target_lon)
+
+    assert math.isclose(relative_bearing_deg, 0.0, abs_tol=1e-6)  # dead ahead once heading matches
+
+
+def test_obstacle_in_view_requires_beam_and_range():
+    world = TwinWorld(start_lat=38.0, start_lon=-85.0, mast_beam_half_angle_deg=5.0, max_ultrasonic_range_m=10.0)
+    near_ahead_lat, near_ahead_lon = project_position(38.0, -85.0, bearing_deg=0.0, distance_m=3.0)
+    obstacle = TwinObstacle(
+        lat=near_ahead_lat, lon=near_ahead_lon, collision_radius_m=0.3,
+        classified_type="barrel", classification_confidence=0.9,
+    )
+    world.obstacles.append(obstacle)
+
+    world.point_mast_at(0.0)
+    assert world._obstacle_in_view() is obstacle
+
+    world.point_mast_at(20.0)  # outside the 5-degree beam
+    assert world._obstacle_in_view() is None
+
+
+def test_obstacle_in_view_respects_max_range():
+    world = TwinWorld(start_lat=38.0, start_lon=-85.0, max_ultrasonic_range_m=2.0)
+    far_ahead_lat, far_ahead_lon = project_position(38.0, -85.0, bearing_deg=0.0, distance_m=10.0)
+    world.obstacles.append(TwinObstacle(
+        lat=far_ahead_lat, lon=far_ahead_lon, collision_radius_m=0.3,
+        classified_type="barrel", classification_confidence=0.9,
+    ))
+
+    world.point_mast_at(0.0)
+    assert world._obstacle_in_view() is None
+
+
+def test_obstacle_in_view_picks_the_nearest_of_several():
+    world = TwinWorld(start_lat=38.0, start_lon=-85.0)
+    near_lat, near_lon = project_position(38.0, -85.0, bearing_deg=0.0, distance_m=2.0)
+    far_lat, far_lon = project_position(38.0, -85.0, bearing_deg=0.0, distance_m=4.0)
+    near = TwinObstacle(lat=near_lat, lon=near_lon, collision_radius_m=0.3, classified_type="post", classification_confidence=0.9)
+    far = TwinObstacle(lat=far_lat, lon=far_lon, collision_radius_m=0.3, classified_type="barrel", classification_confidence=0.9)
+    world.obstacles.extend([far, near])
+
+    world.point_mast_at(0.0)
+    assert world._obstacle_in_view() is near
+
+
+def test_drive_route_arrives_near_each_waypoint_in_order():
+    world = TwinWorld(start_lat=38.0, start_lon=-85.0)
+    waypoint_a = project_position(38.0, -85.0, bearing_deg=0.0, distance_m=10.0)
+    waypoint_b = project_position(*waypoint_a, bearing_deg=90.0, distance_m=10.0)
+
+    world.drive_route([waypoint_a, waypoint_b], speed_mps=2.0, dt_s=1.0)
+
+    assert flat_earth_distance_m((world.lon, world.lat), (waypoint_b[1], waypoint_b[0])) < 2.0
