@@ -111,9 +111,24 @@ assumption as a decision is the most common way a design goes wrong.
   sensor-read methods. Confirming it as an explicit decision avoids
   re-litigating it, and keeps the Pi↔ESP32 link from growing new
   message types (e.g. ultrasonic-over-UART) it doesn't need.
-- **Which Pi model** is still open — not blocking the breadboard, since
-  all of GPS/IMU/ultrasonic/camera use standard interfaces (UART/I2C/CSI)
-  present on effectively every Pi model.
+- **"OTA" and "geofence push" clarified (2026-09-30):** both are local
+  Pi→ESP32 messages over the existing serial link, never independent
+  ESP32 networking. OTA: the Pi downloads new ESP32 firmware over its
+  own WiFi, then flashes the ESP32 locally (esptool-class serial
+  flashing) — "the Pi acts as the flash relay," per the original MP-1
+  design spec. Geofence push (`send_geofence_update`): defined in the
+  `Esp32Link` interface but never called by `MissionRuntime` yet, and
+  its exact purpose isn't documented — the ESP32 has no GPS, so it
+  can't enforce a boundary itself; candidates are a local status-LED
+  indicator (GPIO48, see CON-B2) or a future redundant-safety hook.
+  Leave as an open question for the ESP32 firmware plan.
+- **Pi model (2026-09-30):** Raspberry Pi 5, 4GB or 8GB (both on hand,
+  8GB likely used — this workload doesn't obviously need 8GB, so 4GB
+  stays an option). NVMe HAT available to avoid SD-card wear. Not a
+  breadboard blocker either way — GPS/IMU/ultrasonic/camera use standard
+  interfaces (UART/I2C/CSI) present on every Pi model, and Pi 5's RP1
+  chip in particular makes extra UARTs easy to enable via device-tree
+  overlays if GPS and a Pi↔ESP32 UART link ever needed to coexist.
 
 ## Open questions
 

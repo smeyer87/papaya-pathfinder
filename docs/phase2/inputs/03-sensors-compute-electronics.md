@@ -123,10 +123,12 @@ WiFi)? Capture leanings and reasons, even if undecided.
 - **Supports:** CAP-8, CAP-9, CAP-3, all missions
 - **Decided (D-6):** Hybrid — Pi runs mission logic and owns all
   sensing (GPS/IMU/ultrasonic/camera); ESP32 stays scoped to drive-train
-  actuation, bump-safety interrupt, drive-status, geofence, and OTA.
-  Which specific Pi model (Pi 5 / Zero 2W / other) remains open, but
-  doesn't block the breadboard — see D-6 in
-  [`05-assumptions-decisions.md`](05-assumptions-decisions.md).
+  actuation, bump-safety interrupt, drive-status, geofence push (purpose
+  TBD — not yet called by `MissionRuntime`), and OTA (Pi downloads over
+  WiFi, flashes the ESP32 locally over the serial link — no independent
+  ESP32 networking either way). **Pi model: Raspberry Pi 5** (4GB or
+  8GB, both on hand; NVMe HAT available to avoid SD-card wear) — see
+  D-6 in [`05-assumptions-decisions.md`](05-assumptions-decisions.md).
 
 ## Power
 
@@ -152,6 +154,13 @@ New loads, runtime targets, battery changes, extra regulator rails.
 
 ### PWR-3: Charging & solar assist
 
+- **Parts on hand (2026-09-30):** several small lightweight 7.2V/200mA
+  solar panels, earmarked for logic/electronics only, not motors/servos
+  — matches the "sustain control electronics/radios, not drive" lean
+  below. Not a critical decision yet.
+- **Main battery:** 5000mAh 3S LiPo, already in use and reported to do
+  well at the rover's low-speed Phase 1 operation (see CON-B5 for the
+  existing UBEC/power-rail baseline).
 - **Notes:** Onboard solar considered "nice to have" — likely
   insufficient for motors/servos but might sustain control electronics/
   radios at a lower bulk/weight cost (see Q-7 in 05). Independent of
@@ -166,12 +175,19 @@ remote kill switch.
 
 ### COM-1: WiFi
 
+- **Confirmed (D-6):** Pi 5 has onboard WiFi — this is the rover's
+  comms path (backend sync, OTA firmware download, Management UI). Not
+  the ESP32's job; see D-6.
 - **Notes:** High bandwidth, limited range; suitable for local/on-
-  premise hosting; assumed available from either the ESP32 or Pi
-  platform.
+  premise hosting.
 
 ### COM-2: LoRa / LoRaWAN
 
+- **Parts on hand (2026-09-30):** LoRa hardware available, not yet
+  used. Would need a matching receiver device at the garage base
+  station — inherent to point-to-point LoRa, not an added complication
+  — likely a small Pi Pico- or ESP-class board, a separate build from
+  the rover itself. Deferred; not a breadboard concern.
 - **Notes:** Long-range, low-power; for basic telemetry and low-
   bandwidth commands; not suitable for large data transfers (e.g.
   images/maps).
