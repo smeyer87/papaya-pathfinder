@@ -16,7 +16,22 @@ and [`../../../pathfinder/BOM.md`](../../../pathfinder/BOM.md).
 ### SEN-1: Ultrasonic
 
 - **Supports:** CAP-9, MP-1
-- **Candidates:** Not yet specified.
+- **Candidates:** HC-SR04-class trigger/echo module — starting point is
+  the unit already bundled on the 4Tronix M.A.R.S. Rover mast (alongside
+  its Pi AI Camera mount), since that mast is also a PLT-2 reuse
+  candidate. Any HC-SR04-class module reaches ~3-4m reliably on
+  reasonably-sized, perpendicular targets — soft/angled/small targets
+  reduce effective range, a physics limit of the technology, not a
+  specific part's shortcoming. I2C ToF modules (VL53L0X/L1X-class) were
+  considered and rejected for this role: shorter max range (~2-4m) and
+  known to struggle outdoors in direct sunlight (ambient IR swamps the
+  sensor) — a real problem for a farm rover, not just a range tradeoff.
+- **Interface/owner (see D-6):** Pi-managed via GPIO trigger/echo
+  (`pigpio`'s DMA-based edge timing keeps microsecond accuracy despite
+  Linux scheduling jitter — a well-trodden HC-SR04+Pi combo). Chosen
+  over ESP32-managed specifically to avoid inventing a new
+  ultrasonic-over-UART message on the Pi↔ESP32 link, and to keep all
+  ranging sensors (camera + ultrasonic) consistently Pi-side.
 - **Mounting needs:** Assumes a rotating mast (PLT-2); provides bearing
   and range.
 - **Notes:** Considered an obvious "yes" — low power, low capability,
@@ -37,11 +52,15 @@ and [`../../../pathfinder/BOM.md`](../../../pathfinder/BOM.md).
 
 - **Supports:** CAP-8, MP-2, MP-4
 - **Candidates:** Raspberry Pi AI Camera — edge object classification.
-- **Mounting needs:** TBD.
+  **Confirmed (D-6, 2026-09-30):** v1 unit already owned; a v2 may also
+  be on hand, unverified. A Pi HD Camera (non-AI) is also available as a
+  fallback/secondary. Connects via the Pi's CSI port.
+- **Mounting needs:** TBD — co-mounted with SEN-1 on the 4Tronix mast is
+  the starting candidate.
 - **Notes:** High priority — some form of camera is required in all
-  scenarios. The Pi AI Camera's edge-classification capability is a key
-  factor pulling the platform toward a Raspberry Pi / hybrid controller
-  design (see CMP-1, Q-1 in 05).
+  scenarios. The Pi AI Camera's edge-classification capability was the
+  key factor pulling the platform toward the hybrid controller design
+  (see D-6 in 05).
 
 ### SEN-4: Touch / Bump Sensors
 
@@ -57,7 +76,15 @@ and [`../../../pathfinder/BOM.md`](../../../pathfinder/BOM.md).
 ### SEN-5: IMU (Inertial Measurement Unit)
 
 - **Supports:** CAP-9, CAP-3
-- **Candidates:** Not yet specified.
+- **Candidates:** Not yet specified at the exact-SKU level, but the
+  interface class is settled: I2C (4-wire, shares a bus trivially with
+  other I2C devices — near-zero pinout risk). Lean toward a 9-DOF part
+  with a magnetometer (MPU-9250/ICM-20948-class, or BNO055 for onboard
+  sensor fusion) rather than a bare 6-DOF accel/gyro-only part (e.g.
+  MPU-6050), since `papaya_mission.position_fusion.ImuReading.heading_deg`
+  is a compass heading, which a 6-DOF part can't directly provide.
+  Exact SKU deferred — not a breadboard blocker.
+- **Interface/owner (see D-6):** Pi-managed, I2C.
 - **Mounting needs:** TBD.
 - **Notes:** Optional/desired — useful for orientation but not required
   if it meaningfully complicates the architecture or power budget.
@@ -65,10 +92,23 @@ and [`../../../pathfinder/BOM.md`](../../../pathfinder/BOM.md).
 ### SEN-6: GPS
 
 - **Supports:** CAP-2, CAP-3, CAP-11, CAP-4
-- **Candidates:** Not yet specified — need decimeter-level accuracy.
+- **Candidates:** Not yet specified at the exact-SKU level, but the
+  interface class is settled: UART/NMEA-0183 (4-wire — near-zero pinout
+  risk). u-blox NEO-family (NEO-6M/7M/8M/M9N/M10) is the de facto hobby/
+  prosumer standard, consistent pinout across the family, heavily
+  documented. Exact SKU deferred — not a breadboard blocker. One
+  non-blocking wrinkle: if the still-undecided Pi↔ESP32 link also wants
+  UART and the chosen Pi model exposes only one hardware UART, GPS may
+  need a USB-to-serial adapter instead of header pins — a trivial,
+  common workaround.
+- **Interface/owner (see D-6):** Pi-managed, UART.
+- **Decimeter-accuracy target may be stricter than actually needed** —
+  worth checking against `position_fusion.py`'s existing dead-reckoning
+  error budget (`GPS_LOSS_MAX_ERROR_RADIUS_M = 5.0` in the Mission
+  Runtime code already tolerates several meters of drift between fixes)
+  before shopping for RTK-class hardware to hit decimeter accuracy.
 - **Mounting needs:** Antenna integration TBD (see Q-6 in 05).
-- **Notes:** Almost certainly mandatory. Target accuracy ~decimeter
-  level for reliable position/object-avoidance. Update frequency can be
+- **Notes:** Almost certainly mandatory. Update frequency can be
   moderate — rover is low-speed, so a few fixes per minute is likely
   sufficient.
 
@@ -81,15 +121,11 @@ WiFi)? Capture leanings and reasons, even if undecided.
 ### CMP-1: Core platform architecture
 
 - **Supports:** CAP-8, CAP-9, CAP-3, all missions
-- **Notes:** Open decision between (a) staying ESP32-based — low power,
-  easy analog/digital integration, matches current baseline; (b)
-  shifting to Raspberry Pi — better integration with the AI camera and
-  advanced capabilities, at higher power/space cost; if Pi, further
-  choice between Pi 5 (most capable, NVMe support, higher power/space),
-  Pi Zero 2W (lower power, less capable), or Pi Pico 2W (roughly
-  ESP32-equivalent — only useful as part of a true multi-device split);
-  or (c) hybrid — Pi as master/mission-logic controller delegating
-  sensor collection to ESP32. See Q-1 in
+- **Decided (D-6):** Hybrid — Pi runs mission logic and owns all
+  sensing (GPS/IMU/ultrasonic/camera); ESP32 stays scoped to drive-train
+  actuation, bump-safety interrupt, drive-status, geofence, and OTA.
+  Which specific Pi model (Pi 5 / Zero 2W / other) remains open, but
+  doesn't block the breadboard — see D-6 in
   [`05-assumptions-decisions.md`](05-assumptions-decisions.md).
 
 ## Power

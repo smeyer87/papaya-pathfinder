@@ -97,23 +97,29 @@ assumption as a decision is the most common way a design goes wrong.
   V1" — adds scope without being necessary for the core mission
   packages.
 
+### D-6: Core compute architecture — hybrid Pi + ESP32, Pi owns sensing
+
+- **Decision:** Hybrid architecture (was Q-1 option c): Raspberry Pi
+  runs mission logic and owns all sensing (GPS, IMU, ultrasonic,
+  camera); ESP32 stays scoped to drive-train actuation, bump-safety
+  interrupt, drive-status reporting, geofence push, and OTA. Pi AI
+  Camera confirmed for SEN-3, connected via the Pi's own CSI port (not
+  the ESP32).
+- **Reason:** This is already what the merged `papaya_mission` software
+  assumes — `SensorHub` (gps/imu/ultrasonic/camera) is Pi-side, and
+  `Esp32Link` is deliberately scoped to bump/drive/geofence/OTA with no
+  sensor-read methods. Confirming it as an explicit decision avoids
+  re-litigating it, and keeps the Pi↔ESP32 link from growing new
+  message types (e.g. ultrasonic-over-UART) it doesn't need.
+- **Which Pi model** is still open — not blocking the breadboard, since
+  all of GPS/IMU/ultrasonic/camera use standard interfaces (UART/I2C/CSI)
+  present on effectively every Pi model.
+
 ## Open questions
 
 These become the agenda for the design session.
 
-### Q-1: Core compute architecture
-
-- **Options considered:** (a) stay ESP32-based — low power, easy
-  analog/digital integration, matches current baseline; (b) shift to
-  Raspberry Pi — better integration with the AI camera and advanced
-  capabilities, at higher power/space cost; if Pi, further choice
-  between Pi 5 (most capable, NVMe support), Pi Zero 2W (lower power,
-  less capable), or Pi Pico 2W (roughly ESP32-equivalent — only useful
-  as part of a true multi-device split); (c) hybrid — Pi as master/
-  mission-logic controller delegating sensor collection to ESP32.
-- **Leaning:** Not stated — open.
-- **Blocks:** CMP-1, SEN-3, CAP-8, most downstream hardware/platform
-  decisions.
+### ~~Q-1: Core compute architecture~~ — answered, see D-6
 
 ### Q-2: LiDAR usage pattern
 
