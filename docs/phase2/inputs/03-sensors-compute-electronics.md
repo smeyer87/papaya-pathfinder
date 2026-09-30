@@ -188,6 +188,18 @@ remote kill switch.
   station — inherent to point-to-point LoRa, not an added complication
   — likely a small Pi Pico- or ESP-class board, a separate build from
   the rover itself. Deferred; not a breadboard concern.
+- **Confirmed low-risk to defer (2026-09-30):** no pin/bus conflict
+  with anything decided so far — common LoRa modules are SPI (unclaimed
+  by GPS/IMU/ultrasonic/camera) or a self-contained UART module, and Pi
+  5's RP1 makes a second UART easy if needed. Software-wise it's
+  additive — a new module parallel to `backend_client.py` carrying a
+  small command/telemetry message set, not a retrofit of sensing or the
+  existing HTTP sync path (which can't carry LoRa's bandwidth anyway).
+  Note `local_store`'s store-and-forward design already tolerates WiFi
+  gaps today (buffers and catches up the backend later) — LoRa's real
+  marginal value is *real-time* command/telemetry while actually out of
+  WiFi range (e.g. a remote stop), a genuinely new capability worth
+  having for a true field build, not a fix for something broken.
 - **Notes:** Long-range, low-power; for basic telemetry and low-
   bandwidth commands; not suitable for large data transfers (e.g.
   images/maps).
