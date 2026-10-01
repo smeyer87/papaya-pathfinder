@@ -204,6 +204,26 @@ remote kill switch.
   bandwidth commands; not suitable for large data transfers (e.g.
   images/maps).
 
+### COM-5: Local status LCD
+
+- **Supports:** CAP-4 (telemetry), general bench/field validation.
+- **Candidates:** Not yet specified — user to inventory hobby-kit parts
+  on hand. Likely either a 16x2/20x4 character LCD with an I2C backpack
+  (PCF8574, addr 0x27/0x3F) or a small SSD1306 OLED (I2C, addr 0x3C) —
+  not a touch display, just status readout.
+- **Interface/owner (see D-6):** Pi-managed, I2C. No address conflict
+  with anything decided so far (IMU 0x28/0x68-class, GPS I2C mode 0x42,
+  QMC5883L 0x0D) — shares the IMU's bus for free.
+- **Notes (2026-09-30):** Proposed to show key status indicators across
+  a few subscreens (LCD real estate is small) — e.g. GPS fix/heading,
+  mission state/alert, obstacle counts, drive status. Value beyond
+  convenience: lets a human directly compare on-device state against
+  what the same tick's telemetry record reports, a live cross-check on
+  the already-built telemetry pipeline. Subscreen content, navigation
+  (auto-rotate vs. a physical button), and refresh cadence are real
+  design choices — deferred to the breadboard design session, not
+  settled here.
+
 ### COM-3: Cellular
 
 - **Notes:** Out of scope for Version 2 (see D-1 in 05) — cost and SIM/
