@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import json
 import logging
-import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Protocol
@@ -47,11 +46,10 @@ class FlashRunner(Protocol):
 
 
 def _default_flash_runner(port: str, firmware_path: str) -> bool:
-    result = subprocess.run(
-        ["esptool.py", "--port", port, "write_flash", "0x10000", firmware_path],
-        capture_output=True,
+    raise NotImplementedError(
+        "Real esptool.py flashing is bench-time work -- "
+        "inject a flash_runner, or implement this once hardware is on hand."
     )
-    return result.returncode == 0
 
 
 @dataclass
@@ -85,14 +83,20 @@ class HardwareEsp32Link:
         except (ValueError, UnicodeDecodeError):
             logger.warning("Malformed line from ESP32: %r", line, exc_info=True)
             return
-        message_type = message.get("type")
-        if message_type == "bump":
-            self._pending_bump_events.append(BumpEvent(detected_at=datetime.now(timezone.utc)))
-        elif message_type == "status":
-            self._halted_on_contact = bool(message.get("halted", False))
-            self._last_throttle = float(message.get("throttle", 0.0))
-        else:
-            logger.warning("Unknown message type from ESP32: %r", message_type)
+        if not isinstance(message, dict):
+            logger.warning("Expected JSON object, got %r", message)
+            return
+        try:
+            message_type = message.get("type")
+            if message_type == "bump":
+                self._pending_bump_events.append(BumpEvent(detected_at=datetime.now(timezone.utc)))
+            elif message_type == "status":
+                self._halted_on_contact = bool(message.get("halted", False))
+                self._last_throttle = float(message.get("throttle", 0.0))
+            else:
+                logger.warning("Unknown message type from ESP32: %r", message_type)
+        except (ValueError, TypeError) as e:
+            logger.warning("Error processing message from ESP32: %r: %s", message, e)
 
     def poll_bump_events(self) -> list[BumpEvent]:
         self._drain_transport()

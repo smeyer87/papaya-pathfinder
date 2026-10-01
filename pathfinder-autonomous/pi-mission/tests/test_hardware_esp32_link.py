@@ -63,6 +63,34 @@ def test_malformed_line_is_skipped_without_raising():
     assert len(events) == 1
 
 
+def test_non_dict_json_is_skipped_without_raising():
+    # JSON that parses but isn't a dict (e.g., a bare number, array, or boolean)
+    transport = _FakeTransport([
+        b"5\n",
+        b"[1, 2, 3]\n",
+        b"true\n",
+        _line({"type": "bump"}),
+    ])
+    link = HardwareEsp32Link(transport=transport, port="/dev/fake")
+
+    events = link.poll_bump_events()
+    assert len(events) == 1
+
+
+def test_status_with_non_numeric_throttle_is_skipped_without_raising():
+    # Status message with non-numeric throttle should be skipped, but subsequent valid messages should process
+    transport = _FakeTransport([
+        _line({"type": "status", "halted": False, "throttle": "not-a-number"}),
+        _line({"type": "status", "halted": True, "throttle": 0.5}),
+    ])
+    link = HardwareEsp32Link(transport=transport, port="/dev/fake")
+
+    # First status is skipped, second one should set the values
+    status = link.status()
+    assert status.halted_on_contact is True
+    assert link.read_drive_status().throttle_position == 0.5
+
+
 def test_unknown_message_type_is_ignored():
     transport = _FakeTransport([_line({"type": "something_unexpected"})])
     link = HardwareEsp32Link(transport=transport, port="/dev/fake")
