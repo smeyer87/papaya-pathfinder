@@ -1,0 +1,573 @@
+# =============================================================================
+# Papaya Pathfinder — Breadboard Bench Rig Wiring Layout
+# =============================================================================
+# Same schema as the repo-root `papaya-wiring-layout.yaml` (see that file's
+# header for the full field-by-field documentation: componentType values,
+# connectionPoints, connections, medium.kind, bondedGroups). This is a
+# DIFFERENT, separate build, not a new version of the real rover:
+#
+#   - papaya-wiring-layout.yaml (repo root) = the real Phase 1 rover. Don't
+#     touch it from here; it's the live KiCad source of truth.
+#   - THIS file = the sensor/firmware bench rig: a Raspberry Pi 5 + a
+#     dedicated spare ESP32-S3 dev board, on breadboards, with no custom PCB.
+#
+# Every component below is `componentType: offBoard` — there's no `board`
+# component in this file, because there's no custom PCB here. The physical
+# breadboard(s) (30-pin / 63-pin, however many get combined) are the medium
+# the `wire` connections run through; they aren't modeled as components
+# themselves, the same way the original file doesn't model individual
+# jumper-wire routing choices. The next step after this file is a literal
+# breadboard placement diagram (which rows on which board) — this file is
+# the netlist that diagram will be drawn from, not the diagram itself.
+#
+# Two items are left as placeholders pending inventory/choice, clearly
+# marked below: the exact LCD part, and the exact bump-switch count
+# (defaulted to 2 here — trivial to add more P0-P7 lines on the same
+# PCF8574 later).
+#
+# !! SAFETY NOTES — read before wiring !!
+#   1. HC-SR04-class ultrasonic ECHO pin outputs 5V. Pi GPIO is 3.3V-only
+#      and is NOT 5V-tolerant — wiring ECHO straight to a Pi GPIO pin can
+#      damage the Pi. A simple 2-resistor voltage divider (modeled below as
+#      `echo-divider`) steps it down. Double-check this divider before
+#      ever powering the ultrasonic sensor up near the Pi.
+#   2. The Pi and ESP32 are powered independently (separate USB sources)
+#      but MUST share a common ground for the UART link between them to
+#      work reliably — don't skip the GND-to-GND wire between the two
+#      boards, even though neither needs the other's power.
+# =============================================================================
+
+system:
+  name: "Papaya Pathfinder — Breadboard Bench Rig"
+  description: "Sensor + ESP32-firmware bench rig: Pi 5 (sensing/mission logic) + a dedicated spare ESP32-S3 dev board (bump sensor + link validation), on breadboards. No drivetrain, no custom PCB."
+  notes: "Separate from the real Phase 1 rover — see header."
+
+# -----------------------------------------------------------------------------
+# COMPONENTS
+# -----------------------------------------------------------------------------
+components:
+  # --- compute ---------------------------------------------------------------
+  - id: pi5
+    componentType: offBoard
+    name: "Raspberry Pi 5"
+    model: "Raspberry Pi 5 (4GB or 8GB)"
+    notes: "Owns all sensing + MissionRuntime. Powered via its own USB-C supply, independent of the ESP32's supply."
+    connectionPoints:
+      - id: UART1_TX
+        label: "Secondary UART TX (to ESP32 RX) — RP1 overlay, since GPIO14/15's primary UART is free to use for GPS instead"
+        kicadPinName: "Pi_UART1_TX"
+      - id: UART1_RX
+        label: "Secondary UART RX (from ESP32 TX)"
+        kicadPinName: "Pi_UART1_RX"
+      - id: UART0_TX
+        label: "Primary UART TX (to GPS RX)"
+        kicadPinName: "Pi_UART0_TX"
+      - id: UART0_RX
+        label: "Primary UART RX (from GPS TX)"
+        kicadPinName: "Pi_UART0_RX"
+      - id: I2C_SDA
+        label: "I2C SDA (shared bus: IMU + LCD)"
+        kicadPinName: "Pi_I2C_SDA"
+      - id: I2C_SCL
+        label: "I2C SCL (shared bus: IMU + LCD)"
+        kicadPinName: "Pi_I2C_SCL"
+      - id: GPIO_TRIG
+        label: "GPIO — ultrasonic TRIG (output)"
+        kicadPinName: "Pi_Ultrasonic_TRIG"
+      - id: GPIO_ECHO
+        label: "GPIO — ultrasonic ECHO (input, THROUGH the voltage divider — never direct)"
+        kicadPinName: "Pi_Ultrasonic_ECHO"
+      - id: GPIO_BTN_UP
+        label: "GPIO — button: screen up"
+        kicadPinName: "Pi_Btn_Up"
+      - id: GPIO_BTN_DOWN
+        label: "GPIO — button: screen down"
+        kicadPinName: "Pi_Btn_Down"
+      - id: GPIO_BTN_F1
+        label: "GPIO — function button 1 (per-screen meaning)"
+        kicadPinName: "Pi_Btn_F1"
+      - id: GPIO_BTN_F2
+        label: "GPIO — function button 2 (per-screen meaning)"
+        kicadPinName: "Pi_Btn_F2"
+      - id: GND
+        label: "Ground"
+        kicadPinName: "Pi_GND"
+      - id: 3V3
+        label: "3.3V output (powers buttons' pull-ups if not using internal ones, and the echo-divider's reference)"
+        kicadPinName: "Pi_3V3"
+      - id: CSI
+        label: "CSI camera connector (dedicated ribbon-cable port, not GPIO)"
+        kicadPinName: "Pi_CSI"
+
+  - id: esp32-bench
+    componentType: offBoard
+    name: "ESP32-S3 Dev Board (bench-dedicated, NOT the Phase 1 rover's unit)"
+    model: "ESP32-S3 dev board (spare)"
+    notes: "Powered via its own USB supply, independent of the Pi. New firmware written from scratch for this board — nothing shared with the real rover's firmware."
+    connectionPoints:
+      - id: UART_TX
+        label: "UART TX (to Pi UART1 RX)"
+        kicadPinName: "ESP32_UART_TX"
+      - id: UART_RX
+        label: "UART RX (from Pi UART1 TX)"
+        kicadPinName: "ESP32_UART_RX"
+      - id: I2C_SDA
+        label: "I2C SDA (own bus, to PCF8574 — separate from the Pi's I2C bus)"
+        kicadPinName: "ESP32_I2C_SDA"
+      - id: I2C_SCL
+        label: "I2C SCL (own bus, to PCF8574)"
+        kicadPinName: "ESP32_I2C_SCL"
+      - id: GPIO_EXPANDER_INT
+        label: "GPIO (interrupt-capable) — PCF8574 INT line, for immediate bump response"
+        kicadPinName: "ESP32_Expander_INT"
+      - id: ADC_POT
+        label: "ADC-capable GPIO — throttle-simulator potentiometer wiper"
+        kicadPinName: "ESP32_ADC_Pot"
+      - id: GND
+        label: "Ground"
+        kicadPinName: "ESP32_GND"
+      - id: 3V3
+        label: "3.3V output (powers the PCF8574 and pot)"
+        kicadPinName: "ESP32_3V3"
+
+  # --- GPS ---------------------------------------------------------------
+  - id: gps
+    componentType: offBoard
+    name: "GPS — SparkFun NEO-M9N (SMA)"
+    model: "SparkFun GPS-17285"
+    notes: "Using its UART pins here (not the Qwiic/I2C connector) to validate the long-term interface choice, and to keep GPS traffic off the same I2C bus as the IMU/LCD. Needs a clear view of the sky — an external antenna on the SMA connector, run on a cable if the bench setup is indoors."
+    connectionPoints:
+      - id: TX
+        label: "TX (to Pi UART0 RX)"
+        kicadPinName: "GPS_TX"
+      - id: RX
+        label: "RX (from Pi UART0 TX)"
+        kicadPinName: "GPS_RX"
+      - id: VCC
+        label: "VCC (3.3V)"
+        kicadPinName: "GPS_VCC"
+      - id: GND
+        label: "Ground"
+        kicadPinName: "GPS_GND"
+
+  # --- IMU (both bench-eval units wired simultaneously — no I2C address
+  # conflict: BNO055 is 0x28, ICM-20948 is 0x68 — so both can be read and
+  # compared without rewiring between them) --------------------------------
+  - id: imu-bno055
+    componentType: offBoard
+    name: "IMU — Adafruit BNO055 (bench eval)"
+    model: "Adafruit BNO055 9DOF"
+    notes: "I2C address 0x28 (default). NRND part (see project memory) — fine for bench eval, not for the permanent PCB. If BNO055-on-Pi I2C clock-stretching issues show up, that's a known, documented quirk — lower the I2C baud rate in /boot/config.txt, not a wiring problem."
+    connectionPoints:
+      - id: SDA
+        label: "SDA (Pi I2C bus)"
+        kicadPinName: "BNO055_SDA"
+      - id: SCL
+        label: "SCL (Pi I2C bus)"
+        kicadPinName: "BNO055_SCL"
+      - id: VCC
+        label: "VCC (3.3V)"
+        kicadPinName: "BNO055_VCC"
+      - id: GND
+        label: "Ground"
+        kicadPinName: "BNO055_GND"
+
+  - id: imu-icm20948
+    componentType: offBoard
+    name: "IMU — SparkFun ICM-20948 (Qwiic, bench eval)"
+    model: "SparkFun ICM-20948"
+    notes: "I2C address 0x68 (default). NRND part with an active Last-Time-Delivery date (see project memory) — bench eval only, not the permanent PCB. Can use its Qwiic connector for the I2C leg even though the bus itself is plain I2C, not a dedicated Qwiic chain, here."
+    connectionPoints:
+      - id: SDA
+        label: "SDA (Pi I2C bus)"
+        kicadPinName: "ICM20948_SDA"
+      - id: SCL
+        label: "SCL (Pi I2C bus)"
+        kicadPinName: "ICM20948_SCL"
+      - id: VCC
+        label: "VCC (3.3V)"
+        kicadPinName: "ICM20948_VCC"
+      - id: GND
+        label: "Ground"
+        kicadPinName: "ICM20948_GND"
+
+  # --- ultrasonic + its required level-shifting ---------------------------
+  - id: ultrasonic
+    componentType: offBoard
+    name: "Ultrasonic — 4Tronix mast unit (HC-SR04-class)"
+    model: "HC-SR04-class (bundled with the 4Tronix M.A.R.S. Rover mast)"
+    notes: "Powered at 5V (needed for its rated range). ECHO output is 5V — MUST go through echo-divider before reaching the Pi, never direct."
+    connectionPoints:
+      - id: TRIG
+        label: "TRIG (from Pi GPIO, 3.3V logic — HC-SR04 accepts a 3.3V trigger pulse fine)"
+        kicadPinName: "Ultrasonic_TRIG"
+      - id: ECHO
+        label: "ECHO (5V output — to echo-divider input, NOT direct to Pi)"
+        kicadPinName: "Ultrasonic_ECHO"
+      - id: VCC
+        label: "VCC (5V)"
+        kicadPinName: "Ultrasonic_VCC"
+      - id: GND
+        label: "Ground"
+        kicadPinName: "Ultrasonic_GND"
+
+  - id: echo-divider
+    componentType: offBoard
+    name: "Echo voltage divider (2 resistors)"
+    model: "R1 = 1k ohm, R2 = 2k ohm (standard HC-SR04-to-3.3V-logic divider)"
+    notes: "ECHO -> R1 -> [tap, to Pi GPIO] -> R2 -> GND. Steps the 5V ECHO signal down to ~3.3V (5V * R2/(R1+R2) = 5V * 2k/3k = 3.33V). This is what protects the Pi's GPIO — do not skip it."
+    connectionPoints:
+      - id: IN
+        label: "Input (from Ultrasonic ECHO, 5V)"
+        kicadPinName: "Divider_IN"
+      - id: TAP
+        label: "Tap / output (to Pi GPIO_ECHO, ~3.3V)"
+        kicadPinName: "Divider_TAP"
+      - id: GND
+        label: "Ground (R2's far end)"
+        kicadPinName: "Divider_GND"
+
+  # --- camera --------------------------------------------------------------
+  - id: camera
+    componentType: offBoard
+    name: "Pi AI Camera"
+    model: "Raspberry Pi AI Camera (v1 confirmed on hand)"
+    notes: "Connects via the Pi's CSI ribbon-cable port directly — no GPIO/I2C wiring. No connectionPoints modeled here beyond the CSI link itself (see the CSI connection below)."
+    connectionPoints:
+      - id: CSI
+        label: "CSI ribbon connector"
+        kicadPinName: "Camera_CSI"
+
+  # --- LCD + buttons ---------------------------------------------------------
+  - id: lcd
+    componentType: offBoard
+    name: "Status LCD (PLACEHOLDER — part pending inventory)"
+    model: "TBD — either a 16x2/20x4 character LCD with an I2C (PCF8574) backpack, addr 0x27 or 0x3F, OR a small SSD1306 OLED, addr 0x3C. Update this entry once confirmed."
+    notes: "I2C, shares the Pi's IMU bus — neither candidate address conflicts with the BNO055 (0x28) or ICM-20948 (0x68)."
+    connectionPoints:
+      - id: SDA
+        label: "SDA (Pi I2C bus)"
+        kicadPinName: "LCD_SDA"
+      - id: SCL
+        label: "SCL (Pi I2C bus)"
+        kicadPinName: "LCD_SCL"
+      - id: VCC
+        label: "VCC (3.3V or 5V depending on the actual part — check once chosen)"
+        kicadPinName: "LCD_VCC"
+      - id: GND
+        label: "Ground"
+        kicadPinName: "LCD_GND"
+
+  - id: btn-up
+    componentType: offBoard
+    name: "Button — screen up"
+    model: "Momentary pushbutton"
+    notes: "Wired to GND; use the Pi GPIO's internal pull-up in software (GPIO.PUD_UP or gpiozero's default) rather than an external resistor — simplest option, no extra part needed."
+    connectionPoints:
+      - { id: "1", label: "To Pi GPIO_BTN_UP", kicadPinName: "BtnUp_1" }
+      - { id: "2", label: "To Ground", kicadPinName: "BtnUp_2" }
+
+  - id: btn-down
+    componentType: offBoard
+    name: "Button — screen down"
+    model: "Momentary pushbutton"
+    notes: "Same internal-pull-up approach as btn-up."
+    connectionPoints:
+      - { id: "1", label: "To Pi GPIO_BTN_DOWN", kicadPinName: "BtnDown_1" }
+      - { id: "2", label: "To Ground", kicadPinName: "BtnDown_2" }
+
+  - id: btn-f1
+    componentType: offBoard
+    name: "Function button 1"
+    model: "Momentary pushbutton"
+    notes: "Meaning depends on the current screen (software-defined). Same internal-pull-up approach."
+    connectionPoints:
+      - { id: "1", label: "To Pi GPIO_BTN_F1", kicadPinName: "BtnF1_1" }
+      - { id: "2", label: "To Ground", kicadPinName: "BtnF1_2" }
+
+  - id: btn-f2
+    componentType: offBoard
+    name: "Function button 2"
+    model: "Momentary pushbutton"
+    notes: "Meaning depends on the current screen (software-defined). Same internal-pull-up approach."
+    connectionPoints:
+      - { id: "1", label: "To Pi GPIO_BTN_F2", kicadPinName: "BtnF2_1" }
+      - { id: "2", label: "To Ground", kicadPinName: "BtnF2_2" }
+
+  # --- throttle simulator ----------------------------------------------------
+  - id: pot
+    componentType: offBoard
+    name: "Potentiometer — throttle simulator"
+    model: "Any linear 10k ohm pot (common hobby-kit part)"
+    notes: "Wiper feeds the ESP32's ADC pin, standing in for a real throttle input so read_drive_status() reports a genuinely changing value instead of a static placeholder."
+    connectionPoints:
+      - { id: VCC, label: "One outer leg — 3.3V", kicadPinName: "Pot_VCC" }
+      - { id: WIPER, label: "Wiper (middle pin) — to ESP32 ADC_POT", kicadPinName: "Pot_Wiper" }
+      - { id: GND, label: "Other outer leg — Ground", kicadPinName: "Pot_GND" }
+
+  # --- bump sensing (ESP32-side, via I2C GPIO expander) -----------------------
+  - id: bump-expander
+    componentType: offBoard
+    name: "PCF8574 I2C GPIO Expander"
+    model: "PCF8574 (8-bit, quasi-bidirectional I/O with built-in weak pull-ups)"
+    notes: "On the ESP32's own I2C bus (separate from the Pi's). Built-in weak pull-ups mean each bump switch just connects its P-pin to GND directly -- no external pull-up resistor needed. INT line goes to an ESP32 interrupt-capable GPIO for an immediate response, per the approved MP-1 design's bump-sensor-bus rationale."
+    connectionPoints:
+      - id: SDA
+        label: "SDA (ESP32 I2C bus)"
+        kicadPinName: "Expander_SDA"
+      - id: SCL
+        label: "SCL (ESP32 I2C bus)"
+        kicadPinName: "Expander_SCL"
+      - id: INT
+        label: "Interrupt output (to ESP32 GPIO_EXPANDER_INT)"
+        kicadPinName: "Expander_INT"
+      - id: P0
+        label: "P0 — bump switch 1"
+        kicadPinName: "Expander_P0"
+      - id: P1
+        label: "P1 — bump switch 2"
+        kicadPinName: "Expander_P1"
+      - id: VCC
+        label: "VCC (3.3V)"
+        kicadPinName: "Expander_VCC"
+      - id: GND
+        label: "Ground"
+        kicadPinName: "Expander_GND"
+
+  - id: bump-switch-1
+    componentType: offBoard
+    name: "Bump switch 1 (PLACEHOLDER COUNT — add more P2-P7 the same way if you want more than 2 for this pass)"
+    model: "Momentary switch or lever microswitch"
+    notes: "One leg to expander P0, other leg to Ground — the PCF8574's internal pull-up does the rest."
+    connectionPoints:
+      - { id: "1", label: "To bump-expander.P0", kicadPinName: "Bump1_1" }
+      - { id: "2", label: "To Ground", kicadPinName: "Bump1_2" }
+
+  - id: bump-switch-2
+    componentType: offBoard
+    name: "Bump switch 2"
+    model: "Momentary switch or lever microswitch"
+    notes: "One leg to expander P1, other leg to Ground."
+    connectionPoints:
+      - { id: "1", label: "To bump-expander.P1", kicadPinName: "Bump2_1" }
+      - { id: "2", label: "To Ground", kicadPinName: "Bump2_2" }
+
+# -----------------------------------------------------------------------------
+# CONNECTIONS
+# -----------------------------------------------------------------------------
+# All `kind: wire` — no custom PCB in this build, so no `kind: trace` entries.
+# Gauge/color left blank throughout; breadboard jumper wires, not a real
+# harness — fill in if you want to standardize jumper colors by function.
+connections:
+  # --- Pi <-> ESP32 link (UART) ---
+  - id: conn-001
+    from: { component: pi5, point: UART1_TX }
+    to: { component: esp32-bench, point: UART_RX }
+    medium: { kind: wire, color: "", gauge: "", lengthMm: null }
+    notes: "Pi -> ESP32"
+  - id: conn-002
+    from: { component: pi5, point: UART1_RX }
+    to: { component: esp32-bench, point: UART_TX }
+    medium: { kind: wire, color: "", gauge: "", lengthMm: null }
+    notes: "ESP32 -> Pi"
+  - id: conn-003
+    from: { component: pi5, point: GND }
+    to: { component: esp32-bench, point: GND }
+    medium: { kind: wire, color: "", gauge: "", lengthMm: null }
+    notes: "REQUIRED common ground reference for the UART link — see safety notes in the file header. Not optional, even though each board has its own power supply."
+
+  # --- GPS (Pi UART0) ---
+  - id: conn-004
+    from: { component: pi5, point: UART0_TX }
+    to: { component: gps, point: RX }
+    medium: { kind: wire, color: "", gauge: "", lengthMm: null }
+  - id: conn-005
+    from: { component: pi5, point: UART0_RX }
+    to: { component: gps, point: TX }
+    medium: { kind: wire, color: "", gauge: "", lengthMm: null }
+  - id: conn-006
+    from: { component: pi5, point: 3V3 }
+    to: { component: gps, point: VCC }
+    medium: { kind: wire, color: "", gauge: "", lengthMm: null }
+  - id: conn-007
+    from: { component: pi5, point: GND }
+    to: { component: gps, point: GND }
+    medium: { kind: wire, color: "", gauge: "", lengthMm: null }
+
+  # --- IMU x2 (Pi I2C bus) ---
+  - id: conn-008
+    from: { component: pi5, point: I2C_SDA }
+    to: { component: imu-bno055, point: SDA }
+    medium: { kind: wire, color: "", gauge: "", lengthMm: null }
+  - id: conn-009
+    from: { component: pi5, point: I2C_SCL }
+    to: { component: imu-bno055, point: SCL }
+    medium: { kind: wire, color: "", gauge: "", lengthMm: null }
+  - id: conn-010
+    from: { component: pi5, point: 3V3 }
+    to: { component: imu-bno055, point: VCC }
+    medium: { kind: wire, color: "", gauge: "", lengthMm: null }
+  - id: conn-011
+    from: { component: pi5, point: GND }
+    to: { component: imu-bno055, point: GND }
+    medium: { kind: wire, color: "", gauge: "", lengthMm: null }
+  - id: conn-012
+    from: { component: pi5, point: I2C_SDA }
+    to: { component: imu-icm20948, point: SDA }
+    medium: { kind: wire, color: "", gauge: "", lengthMm: null }
+    notes: "Same bus as the BNO055 — different address (0x68 vs 0x28), both can be present at once"
+  - id: conn-013
+    from: { component: pi5, point: I2C_SCL }
+    to: { component: imu-icm20948, point: SCL }
+    medium: { kind: wire, color: "", gauge: "", lengthMm: null }
+  - id: conn-014
+    from: { component: pi5, point: 3V3 }
+    to: { component: imu-icm20948, point: VCC }
+    medium: { kind: wire, color: "", gauge: "", lengthMm: null }
+  - id: conn-015
+    from: { component: pi5, point: GND }
+    to: { component: imu-icm20948, point: GND }
+    medium: { kind: wire, color: "", gauge: "", lengthMm: null }
+
+  # --- LCD (Pi I2C bus, same bus as IMU) ---
+  - id: conn-016
+    from: { component: pi5, point: I2C_SDA }
+    to: { component: lcd, point: SDA }
+    medium: { kind: wire, color: "", gauge: "", lengthMm: null }
+  - id: conn-017
+    from: { component: pi5, point: I2C_SCL }
+    to: { component: lcd, point: SCL }
+    medium: { kind: wire, color: "", gauge: "", lengthMm: null }
+  - id: conn-018
+    from: { component: pi5, point: 3V3 }
+    to: { component: lcd, point: VCC }
+    medium: { kind: wire, color: "", gauge: "", lengthMm: null }
+    notes: "Confirm voltage once the exact LCD part is chosen — some character-LCD I2C backpacks want 5V"
+  - id: conn-019
+    from: { component: pi5, point: GND }
+    to: { component: lcd, point: GND }
+    medium: { kind: wire, color: "", gauge: "", lengthMm: null }
+
+  # --- Buttons (Pi GPIO, direct to ground, internal pull-ups in software) ---
+  - id: conn-020
+    from: { component: pi5, point: GPIO_BTN_UP }
+    to: { component: btn-up, point: "1" }
+    medium: { kind: wire, color: "", gauge: "", lengthMm: null }
+  - id: conn-021
+    from: { component: btn-up, point: "2" }
+    to: { component: pi5, point: GND }
+    medium: { kind: wire, color: "", gauge: "", lengthMm: null }
+  - id: conn-022
+    from: { component: pi5, point: GPIO_BTN_DOWN }
+    to: { component: btn-down, point: "1" }
+    medium: { kind: wire, color: "", gauge: "", lengthMm: null }
+  - id: conn-023
+    from: { component: btn-down, point: "2" }
+    to: { component: pi5, point: GND }
+    medium: { kind: wire, color: "", gauge: "", lengthMm: null }
+  - id: conn-024
+    from: { component: pi5, point: GPIO_BTN_F1 }
+    to: { component: btn-f1, point: "1" }
+    medium: { kind: wire, color: "", gauge: "", lengthMm: null }
+  - id: conn-025
+    from: { component: btn-f1, point: "2" }
+    to: { component: pi5, point: GND }
+    medium: { kind: wire, color: "", gauge: "", lengthMm: null }
+  - id: conn-026
+    from: { component: pi5, point: GPIO_BTN_F2 }
+    to: { component: btn-f2, point: "1" }
+    medium: { kind: wire, color: "", gauge: "", lengthMm: null }
+  - id: conn-027
+    from: { component: btn-f2, point: "2" }
+    to: { component: pi5, point: GND }
+    medium: { kind: wire, color: "", gauge: "", lengthMm: null }
+
+  # --- Ultrasonic (Pi GPIO, ECHO through the divider) ---
+  - id: conn-028
+    from: { component: pi5, point: GPIO_TRIG }
+    to: { component: ultrasonic, point: TRIG }
+    medium: { kind: wire, color: "", gauge: "", lengthMm: null }
+  - id: conn-029
+    from: { component: ultrasonic, point: ECHO }
+    to: { component: echo-divider, point: IN }
+    medium: { kind: wire, color: "", gauge: "", lengthMm: null }
+    notes: "5V side — do not continue this wire to the Pi directly"
+  - id: conn-030
+    from: { component: echo-divider, point: TAP }
+    to: { component: pi5, point: GPIO_ECHO }
+    medium: { kind: wire, color: "", gauge: "", lengthMm: null }
+    notes: "~3.3V side — safe for the Pi GPIO"
+  - id: conn-031
+    from: { component: echo-divider, point: GND }
+    to: { component: pi5, point: GND }
+    medium: { kind: wire, color: "", gauge: "", lengthMm: null }
+  - id: conn-032
+    from: { component: ultrasonic, point: VCC }
+    to: { component: pi5, point: 3V3 }
+    medium: { kind: wire, color: "", gauge: "", lengthMm: null }
+    notes: "CHECK the actual sensor: if it needs 5V (most HC-SR04 clones do, for rated range), power it from a separate 5V source instead (e.g. the ESP32 dev board's 5V pin, or a bench supply) rather than the Pi's 3.3V rail — note this connection as a placeholder pending that check."
+  - id: conn-033
+    from: { component: ultrasonic, point: GND }
+    to: { component: pi5, point: GND }
+    medium: { kind: wire, color: "", gauge: "", lengthMm: null }
+
+  # --- Camera (CSI, not GPIO) ---
+  - id: conn-034
+    from: { component: pi5, point: CSI }
+    to: { component: camera, point: CSI }
+    medium: { kind: wire, color: "", gauge: "", lengthMm: null }
+    notes: "Ribbon cable into the Pi's dedicated camera connector, not a breadboard jumper"
+
+  # --- ESP32 <-> PCF8574 (ESP32's own I2C bus) ---
+  - id: conn-035
+    from: { component: esp32-bench, point: I2C_SDA }
+    to: { component: bump-expander, point: SDA }
+    medium: { kind: wire, color: "", gauge: "", lengthMm: null }
+  - id: conn-036
+    from: { component: esp32-bench, point: I2C_SCL }
+    to: { component: bump-expander, point: SCL }
+    medium: { kind: wire, color: "", gauge: "", lengthMm: null }
+  - id: conn-037
+    from: { component: bump-expander, point: INT }
+    to: { component: esp32-bench, point: GPIO_EXPANDER_INT }
+    medium: { kind: wire, color: "", gauge: "", lengthMm: null }
+  - id: conn-038
+    from: { component: esp32-bench, point: 3V3 }
+    to: { component: bump-expander, point: VCC }
+    medium: { kind: wire, color: "", gauge: "", lengthMm: null }
+  - id: conn-039
+    from: { component: esp32-bench, point: GND }
+    to: { component: bump-expander, point: GND }
+    medium: { kind: wire, color: "", gauge: "", lengthMm: null }
+
+  # --- Bump switches -> expander ---
+  - id: conn-040
+    from: { component: bump-expander, point: P0 }
+    to: { component: bump-switch-1, point: "1" }
+    medium: { kind: wire, color: "", gauge: "", lengthMm: null }
+  - id: conn-041
+    from: { component: bump-switch-1, point: "2" }
+    to: { component: esp32-bench, point: GND }
+    medium: { kind: wire, color: "", gauge: "", lengthMm: null }
+  - id: conn-042
+    from: { component: bump-expander, point: P1 }
+    to: { component: bump-switch-2, point: "1" }
+    medium: { kind: wire, color: "", gauge: "", lengthMm: null }
+  - id: conn-043
+    from: { component: bump-switch-2, point: "2" }
+    to: { component: esp32-bench, point: GND }
+    medium: { kind: wire, color: "", gauge: "", lengthMm: null }
+
+  # --- Throttle-simulator pot (ESP32 ADC) ---
+  - id: conn-044
+    from: { component: esp32-bench, point: 3V3 }
+    to: { component: pot, point: VCC }
+    medium: { kind: wire, color: "", gauge: "", lengthMm: null }
+  - id: conn-045
+    from: { component: pot, point: WIPER }
+    to: { component: esp32-bench, point: ADC_POT }
+    medium: { kind: wire, color: "", gauge: "", lengthMm: null }
+  - id: conn-046
+    from: { component: pot, point: GND }
+    to: { component: esp32-bench, point: GND }
+    medium: { kind: wire, color: "", gauge: "", lengthMm: null }
