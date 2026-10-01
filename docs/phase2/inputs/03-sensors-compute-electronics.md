@@ -36,6 +36,16 @@ and [`../../../pathfinder/BOM.md`](../../../pathfinder/BOM.md).
   and range.
 - **Notes:** Considered an obvious "yes" — low power, low capability,
   easy to integrate for basic bearing-and-range sensing.
+- **Vertical beam cone — plan to test empirically (2026-09-30):** an
+  HC-SR04-class sensor's vertical beam is narrow (~15° effective), and
+  whether it covers payload-bay height (vs. only ground-level
+  obstacles) depends on mount height and distance, neither fixed yet.
+  Rather than calculate this from a datasheet, once the breadboard's
+  ultrasonic is wired up: move a target vertically at a few distances
+  and record where detection drops out. Feeds directly into SEN-4's
+  payload-bay-corner bump-sensor question — if the cone already covers
+  that height, a bump sensor there is redundant; if not, it's the gap
+  that sensor needs to close.
 
 ### SEN-2: LiDAR
 
@@ -66,12 +76,29 @@ and [`../../../pathfinder/BOM.md`](../../../pathfinder/BOM.md).
 
 - **Supports:** CAP-9
 - **Candidates:** Not yet specified — a minimal set at the rover
-  corners.
+  corners. **Breadboard bench rig (2026-09-30):** 2 switches (left/right)
+  for this first pass — see `docs/wiring/breadboard-wiring-layout.yaml`.
+- **Production count/placement (2026-09-30):** leaning toward all 4
+  axle corners, possibly *also* the payload bay's corners if it ends up
+  tall enough — not just ground-level. Open question: whether the
+  payload-bay height falls inside or outside SEN-1's ultrasonic vertical
+  beam cone. If it's inside the cone, the ultrasonic may already catch
+  mid-height obstacles the camera/ultrasonic combo would otherwise miss
+  (a signpost, a branch at hip height); if it's outside, that's exactly
+  the gap a payload-bay-corner bump sensor would need to cover. See
+  SEN-1's note on empirically testing the real cone once the breadboard
+  sensor is wired up, rather than guessing from a datasheet.
 - **Mounting needs:** Corner-mounted, low to the ground (to catch
-  obstacles below the height of ultrasonic/LiDAR/camera sensing).
+  obstacles below the height of ultrasonic/LiDAR/camera sensing) — and
+  possibly also at payload-bay-corner height, pending the vertical-cone
+  question above.
 - **Notes:** Should give immediate stop-forward-motion feedback; ideally
   integrates with CAP-9 to interrupt the current path and back away/
-  reroute around the detected object.
+  reroute around the detected object. Motivation (2026-09-30, from real
+  test runs): small ground obstacles — a fallen branch, a rut, tall
+  grass/plants — likely won't register via camera or ultrasonic at all,
+  but still impair wheel operation; see the training-mode inbox note for
+  the related idea of capturing recovery maneuvers for these cases.
 
 ### SEN-5: IMU (Inertial Measurement Unit)
 
