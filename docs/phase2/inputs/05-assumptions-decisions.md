@@ -177,6 +177,19 @@ These become the agenda for the design session.
 - **Options considered:** Consolidate ELRS/LoRa/WiFi/GPS antennas onto a
   single common mast (possibly shared with the sensor mast, PLT-2); keep
   as a separate "nest" of individual antennas.
+- **Confirmed constraint (2026-09-30):** these cannot share antennas —
+  GPS (L1 band, ~1575 MHz), LoRa (915 MHz ISM), and ELRS are on distinct
+  frequencies, each requiring its own correctly-tuned antenna; WiFi is
+  typically on-module (2.4/5 GHz, no external antenna in most Pi/ESP32
+  setups). So this is genuinely "at least 3 distinct antennas," not a
+  single-feedline question — raises the stakes of consolidate-vs-nest
+  rather than resolving it.
+- **On-hand parts:** Wishiot 915 MHz 5dBi antennas (large fixed plastic
+  housing, SMA-ish screw-terminal coax pigtail) for LoRa; 2x ELRS
+  antennas from the V1 design. **Gap:** no GPS-specific active antenna
+  yet identified — the chosen SparkFun NEO-M9N SMA board expects an
+  external antenna (no onboard patch), so one needs sourcing before the
+  breadboard can get a real fix, independent of this mast question.
 - **Leaning:** Not stated — open.
 - **Blocks:** PLT-2, COM items, PCB/wiring impact.
 
