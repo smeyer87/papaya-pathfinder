@@ -27,6 +27,29 @@ build. Open question the user raised themselves: is this a capability
 that supports many/all missions (most likely framing), or its own mission
 package? Leave open until a real planning pass.
 
+## OTA safety gating: no-mission-underway check (2026-09-30)
+
+From the breadboard design session: OTA firmware updates should be
+restricted to when a mission is NOT underway (no accidental reflash
+mid-mission). A "WiFi in range" condition doesn't need separate
+handling — the Pi can't call `trigger_ota()` without a firmware file
+it already downloaded over WiFi, so that gate already exists
+structurally. "No mission underway" is the real one, and splits into
+two tiers worth keeping distinct:
+- **Pi-side gating (straightforward, do this):** before calling
+  `trigger_ota()`, check whether `MissionRuntime` has an active
+  `SweepSession` and refuse if so.
+- **Device-level veto (real tradeoff, not for the breadboard):** the
+  ESP32 itself refusing a reflash independent of whether the Pi got it
+  right. This conflicts with the breadboard's simplified OTA mechanism
+  (`esptool`'s DTR/RTS auto-reset bypasses the running firmware
+  entirely — nothing to hook a refusal into). Getting genuine
+  defense-in-depth here means a cooperative handshake (Pi asks "safe to
+  flash?", firmware checks its own mission-active state and acks/
+  nacks) instead of the bare auto-reset. Belongs in the real ESP32
+  firmware plan, where OTA sophistication is already expected to grow
+  — not built into the bench rig's first-pass OTA validation.
+
 ## Manual drive override via LCD + spare ELRS controller (2026-09-30)
 
 A second controller/receiver could let an operator manually override
