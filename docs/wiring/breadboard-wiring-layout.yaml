@@ -93,8 +93,11 @@ components:
         label: "Ground"
         kicadPinName: "Pi_GND"
       - id: 3V3
-        label: "3.3V output (powers buttons' pull-ups if not using internal ones, and the echo-divider's reference)"
+        label: "3.3V output (logic-level devices: IMUs, buttons' pull-ups if not using internal ones)"
         kicadPinName: "Pi_3V3"
+      - id: 5V
+        label: "5V output (header pin 2 or 4) — for 5V-only peripherals: ultrasonic VCC, LCD VCC"
+        kicadPinName: "Pi_5V"
       - id: CSI
         label: "CSI camera connector (dedicated ribbon-cable port, not GPIO)"
         kicadPinName: "Pi_CSI"
@@ -241,9 +244,9 @@ components:
   # --- LCD + buttons ---------------------------------------------------------
   - id: lcd
     componentType: offBoard
-    name: "Status LCD (PLACEHOLDER — part pending inventory)"
-    model: "TBD — either a 16x2/20x4 character LCD with an I2C (PCF8574) backpack, addr 0x27 or 0x3F, OR a small SSD1306 OLED, addr 0x3C. Update this entry once confirmed."
-    notes: "I2C, shares the Pi's IMU bus — neither candidate address conflicts with the BNO055 (0x28) or ICM-20948 (0x68)."
+    name: "Status LCD"
+    model: "ASSUMED DEFAULT, not yet physically confirmed: 16x2 character LCD with a PCF8574 I2C backpack, addr 0x27 (some backpack batches default to 0x3F instead — check with `i2cdetect -y 1` once powered up). The common part bundled in Adafruit/SunFounder-style 'Intro to Raspberry Pi' kits. Swap this entry for the real part once inventoried — wiring is identical for any I2C character LCD or SSD1306 OLED, so nothing else in this file changes either way."
+    notes: "I2C, shares the Pi's IMU bus — doesn't conflict with the BNO055 (0x28) or ICM-20948 (0x68); if the backpack turns out to default to 0x3F instead of 0x27, still no conflict."
     connectionPoints:
       - id: SDA
         label: "SDA (Pi I2C bus)"
@@ -439,10 +442,10 @@ connections:
     to: { component: lcd, point: SCL }
     medium: { kind: wire, color: "", gauge: "", lengthMm: null }
   - id: conn-018
-    from: { component: pi5, point: 3V3 }
+    from: { component: pi5, point: 5V }
     to: { component: lcd, point: VCC }
     medium: { kind: wire, color: "", gauge: "", lengthMm: null }
-    notes: "Confirm voltage once the exact LCD part is chosen — some character-LCD I2C backpacks want 5V"
+    notes: "5V for the assumed-default 16x2/PCF8574 character LCD (dim/unreadable backlight at 3.3V, though not damaged). Its I2C lines (SDA/SCL) are separately fine at 3.3V logic levels regardless of this VCC voltage — PCF8574 backpacks are commonly 5V-tolerant on the bus side. Re-check if the real part turns out to be a 3.3V-native OLED instead, in which case switch this back to the 3V3 point."
   - id: conn-019
     from: { component: pi5, point: GND }
     to: { component: lcd, point: GND }
@@ -503,9 +506,9 @@ connections:
     medium: { kind: wire, color: "", gauge: "", lengthMm: null }
   - id: conn-032
     from: { component: ultrasonic, point: VCC }
-    to: { component: pi5, point: 3V3 }
+    to: { component: pi5, point: 5V }
     medium: { kind: wire, color: "", gauge: "", lengthMm: null }
-    notes: "CHECK the actual sensor: if it needs 5V (most HC-SR04 clones do, for rated range), power it from a separate 5V source instead (e.g. the ESP32 dev board's 5V pin, or a bench supply) rather than the Pi's 3.3V rail — note this connection as a placeholder pending that check."
+    notes: "Most HC-SR04 clones want 5V for rated range (confirm against the actual 4Tronix unit once in hand — if it's a 3.3V-native variant, switch this to the 3V3 point instead)."
   - id: conn-033
     from: { component: ultrasonic, point: GND }
     to: { component: pi5, point: GND }
