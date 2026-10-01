@@ -92,3 +92,70 @@ def test_imu_returns_last_known_reading_when_device_reports_none():
     second = source.read()
 
     assert second == first
+
+
+from papaya_mission.hardware_sensor_hub import (
+    HardwareCameraSource,
+    HardwareSensorHub,
+    HardwareUltrasonicSource,
+)
+
+
+class _FakePulseMeasurer:
+    def __init__(self, pulse_us: float | None) -> None:
+        self._pulse_us = pulse_us
+
+    def measure_echo_pulse_us(self) -> float | None:
+        return self._pulse_us
+
+
+def test_ultrasonic_returns_none_when_no_echo():
+    source = HardwareUltrasonicSource(pulse_measurer=_FakePulseMeasurer(None))
+
+    assert source.read() is None
+
+
+def test_ultrasonic_converts_pulse_width_to_range_with_zero_bearing():
+    # Standard HC-SR04 formula: distance_cm = pulse_width_us / 58.0.
+    # 580us / 58.0 = 10cm = 0.1m.
+    source = HardwareUltrasonicSource(pulse_measurer=_FakePulseMeasurer(580.0))
+
+    detection = source.read()
+
+    assert detection is not None
+    assert detection.relative_bearing_deg == 0.0
+    assert detection.range_m == 0.1
+
+
+class _FakeClassifierSource:
+    def __init__(self, result: tuple[str, float] | None) -> None:
+        self._result = result
+
+    def classify(self) -> tuple[str, float] | None:
+        return self._result
+
+
+def test_camera_returns_none_when_nothing_classified():
+    source = HardwareCameraSource(classifier_source=_FakeClassifierSource(None))
+
+    assert source.read() is None
+
+
+def test_camera_passes_through_a_classification():
+    source = HardwareCameraSource(classifier_source=_FakeClassifierSource(("barrel", 0.9)))
+
+    assert source.read() == ("barrel", 0.9)
+
+
+def test_hardware_sensor_hub_bundles_all_four_sources():
+    gps = HardwareGpsSource(line_source=_FakeLineSource([]), clock=lambda: 1.0)
+    imu = HardwareImuSource(device=_FakeBno055Device(), clock=lambda: 1.0)
+    ultrasonic = HardwareUltrasonicSource(pulse_measurer=_FakePulseMeasurer(None))
+    camera = HardwareCameraSource(classifier_source=_FakeClassifierSource(None))
+
+    hub = HardwareSensorHub(gps=gps, imu=imu, ultrasonic=ultrasonic, camera=camera)
+
+    assert hub.gps is gps
+    assert hub.imu is imu
+    assert hub.ultrasonic is ultrasonic
+    assert hub.camera is camera

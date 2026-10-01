@@ -14,6 +14,7 @@ import time
 from typing import Callable, Protocol
 
 from papaya_mission.position_fusion import GpsFix, ImuReading
+from papaya_mission.sensor_hub import ObstacleDetection
 
 
 class GpsLineSource(Protocol):
@@ -118,3 +119,58 @@ class HardwareImuSource:
         )
         self._last_reading = reading
         return reading
+
+
+class PulseMeasurer(Protocol):
+    """Triggers the ultrasonic sensor and returns the echo pulse width
+    in microseconds, or None if no echo was received (nothing in
+    range). The real implementation (a pigpio-timed TRIG/ECHO sequence
+    through the voltage divider) is bench-time work.
+    """
+
+    def measure_echo_pulse_us(self) -> float | None: ...
+
+
+class HardwareUltrasonicSource:
+    """The bench rig has no mast-rotation servo wired (see
+    docs/wiring/breadboard-wiring-layout.yaml) -- the sensor is simply
+    forward-facing, so relative_bearing_deg is always 0.0 here.
+    """
+
+    def __init__(self, pulse_measurer: PulseMeasurer) -> None:
+        self._pulse_measurer = pulse_measurer
+
+    def read(self) -> ObstacleDetection | None:
+        pulse_us = self._pulse_measurer.measure_echo_pulse_us()
+        if pulse_us is None:
+            return None
+        range_m = (pulse_us / 58.0) / 100.0
+        return ObstacleDetection(relative_bearing_deg=0.0, range_m=range_m)
+
+
+class ClassifierSource(Protocol):
+    """Returns the current camera classification, or None if nothing is
+    classified this read. The real Pi AI Camera / picamera2 / IMX500
+    backend is bench-time work -- its API is fast-moving and best
+    confirmed against the actual camera and current docs, not guessed
+    at here. Any real implementation that satisfies this shape drops in
+    without changing HardwareCameraSource.
+    """
+
+    def classify(self) -> tuple[str, float] | None: ...
+
+
+class HardwareCameraSource:
+    def __init__(self, classifier_source: ClassifierSource) -> None:
+        self._classifier_source = classifier_source
+
+    def read(self) -> tuple[str, float] | None:
+        return self._classifier_source.classify()
+
+
+class HardwareSensorHub:
+    def __init__(self, gps, imu, ultrasonic, camera) -> None:
+        self.gps = gps
+        self.imu = imu
+        self.ultrasonic = ultrasonic
+        self.camera = camera
