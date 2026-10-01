@@ -158,9 +158,9 @@ components:
   # compared without rewiring between them) --------------------------------
   - id: imu-bno055
     componentType: offBoard
-    name: "IMU — Adafruit BNO055 (bench eval)"
+    name: "IMU — Adafruit BNO055 (bench eval, ACTIVE — wired first)"
     model: "Adafruit BNO055 9DOF"
-    notes: "I2C address 0x28 (default). NRND part (see project memory) — fine for bench eval, not for the permanent PCB. If BNO055-on-Pi I2C clock-stretching issues show up, that's a known, documented quirk — lower the I2C baud rate in /boot/config.txt, not a wiring problem."
+    notes: "I2C address 0x28 (default). NRND part (see project memory) — fine for bench eval, not for the permanent PCB. If BNO055-on-Pi I2C clock-stretching issues show up, that's a known, documented quirk — lower the I2C baud rate in /boot/config.txt, not a wiring problem. Wired first for bring-up: onboard sensor fusion gives a working heading_deg fastest, least software needed before seeing real numbers. Only ONE IMU is wired at a time — see imu-icm20948 for the swap-in alternative, not an addition."
     connectionPoints:
       - id: SDA
         label: "SDA (Pi I2C bus)"
@@ -177,9 +177,9 @@ components:
 
   - id: imu-icm20948
     componentType: offBoard
-    name: "IMU — SparkFun ICM-20948 (Qwiic, bench eval)"
+    name: "IMU — SparkFun ICM-20948 (Qwiic, bench eval, ALTERNATE — not wired yet)"
     model: "SparkFun ICM-20948"
-    notes: "I2C address 0x68 (default). NRND part with an active Last-Time-Delivery date (see project memory) — bench eval only, not the permanent PCB. Can use its Qwiic connector for the I2C leg even though the bus itself is plain I2C, not a dedicated Qwiic chain, here."
+    notes: "I2C address 0x68 (default). NRND part with an active Last-Time-Delivery date (see project memory) — bench eval only, not the permanent PCB. Can use its Qwiic connector for the I2C leg even though the bus itself is plain I2C, not a dedicated Qwiic chain, here. SWAP-IN alternative to imu-bno055, not run simultaneously with it: when you want to compare, disconnect the BNO055's 4 wires (SDA/SCL/VCC/GND) and connect these same 4 points in their place — same pi5 source points (I2C_SDA, I2C_SCL, 3V3, GND), no address conflict if you ever did want both live at once, but the working assumption is one at a time."
     connectionPoints:
       - id: SDA
         label: "SDA (Pi I2C bus)"
@@ -414,23 +414,11 @@ connections:
     from: { component: pi5, point: GND }
     to: { component: imu-bno055, point: GND }
     medium: { kind: wire, color: "", gauge: "", lengthMm: null }
-  - id: conn-012
-    from: { component: pi5, point: I2C_SDA }
-    to: { component: imu-icm20948, point: SDA }
-    medium: { kind: wire, color: "", gauge: "", lengthMm: null }
-    notes: "Same bus as the BNO055 — different address (0x68 vs 0x28), both can be present at once"
-  - id: conn-013
-    from: { component: pi5, point: I2C_SCL }
-    to: { component: imu-icm20948, point: SCL }
-    medium: { kind: wire, color: "", gauge: "", lengthMm: null }
-  - id: conn-014
-    from: { component: pi5, point: 3V3 }
-    to: { component: imu-icm20948, point: VCC }
-    medium: { kind: wire, color: "", gauge: "", lengthMm: null }
-  - id: conn-015
-    from: { component: pi5, point: GND }
-    to: { component: imu-icm20948, point: GND }
-    medium: { kind: wire, color: "", gauge: "", lengthMm: null }
+  # conn-012..015 intentionally not present: imu-icm20948 is the documented
+  # swap-in alternative to imu-bno055 (see its notes), not wired
+  # simultaneously. When swapping, connect its SDA/SCL/VCC/GND to the same
+  # pi5 points conn-008..011 use (I2C_SDA, I2C_SCL, 3V3, GND) in place of
+  # the BNO055's wires.
 
   # --- LCD (Pi I2C bus, same bus as IMU) ---
   - id: conn-016
