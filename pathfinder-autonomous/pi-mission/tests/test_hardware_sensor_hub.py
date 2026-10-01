@@ -46,20 +46,50 @@ def test_gps_ignores_malformed_lines():
     assert source.read() is not None
 
 
+def test_gps_returns_none_when_line_source_raises():
+    source = HardwareGpsSource(line_source=_FakeLineSource([], raises=True), clock=lambda: 1.0)
+
+    assert source.read() is None
+
+
 class _FakeLineSource:
-    def __init__(self, lines: list[bytes]):
+    def __init__(self, lines: list[bytes], raises: bool = False):
         self._lines = list(lines)
+        self.raises = raises
 
     def readline(self) -> bytes:
+        if self.raises:
+            raise OSError("serial read error")
         if self._lines:
             return self._lines.pop(0)
         return b""
 
 
 class _FakeBno055Device:
-    def __init__(self, euler=(None, None, None), linear_acceleration=(None, None, None)):
-        self.euler = euler
-        self.linear_acceleration = linear_acceleration
+    def __init__(self, euler=(None, None, None), linear_acceleration=(None, None, None), raises: bool = False):
+        self._euler = euler
+        self._linear_acceleration = linear_acceleration
+        self.raises = raises
+
+    @property
+    def euler(self):
+        if self.raises:
+            raise OSError("I2C bus error reading euler")
+        return self._euler
+
+    @euler.setter
+    def euler(self, value):
+        self._euler = value
+
+    @property
+    def linear_acceleration(self):
+        if self.raises:
+            raise OSError("I2C bus error reading linear_acceleration")
+        return self._linear_acceleration
+
+    @linear_acceleration.setter
+    def linear_acceleration(self, value):
+        self._linear_acceleration = value
 
 
 def test_imu_returns_default_reading_before_any_valid_read():
@@ -94,6 +124,17 @@ def test_imu_returns_last_known_reading_when_device_reports_none():
     assert second == first
 
 
+def test_imu_returns_last_known_reading_when_device_raises():
+    device = _FakeBno055Device(euler=(45.0, 0.0, 0.0), linear_acceleration=(0.0, 1.0, 0.0))
+    source = HardwareImuSource(device=device, clock=lambda: 1.0)
+    first = source.read()
+
+    device.raises = True
+    second = source.read()
+
+    assert second == first
+
+
 from papaya_mission.hardware_sensor_hub import (
     HardwareCameraSource,
     HardwareSensorHub,
@@ -102,15 +143,24 @@ from papaya_mission.hardware_sensor_hub import (
 
 
 class _FakePulseMeasurer:
-    def __init__(self, pulse_us: float | None) -> None:
+    def __init__(self, pulse_us: float | None, raises: bool = False) -> None:
         self._pulse_us = pulse_us
+        self.raises = raises
 
     def measure_echo_pulse_us(self) -> float | None:
+        if self.raises:
+            raise OSError("GPIO timing error")
         return self._pulse_us
 
 
 def test_ultrasonic_returns_none_when_no_echo():
     source = HardwareUltrasonicSource(pulse_measurer=_FakePulseMeasurer(None))
+
+    assert source.read() is None
+
+
+def test_ultrasonic_returns_none_when_pulse_measurer_raises():
+    source = HardwareUltrasonicSource(pulse_measurer=_FakePulseMeasurer(None, raises=True))
 
     assert source.read() is None
 
@@ -128,15 +178,24 @@ def test_ultrasonic_converts_pulse_width_to_range_with_zero_bearing():
 
 
 class _FakeClassifierSource:
-    def __init__(self, result: tuple[str, float] | None) -> None:
+    def __init__(self, result: tuple[str, float] | None, raises: bool = False) -> None:
         self._result = result
+        self.raises = raises
 
     def classify(self) -> tuple[str, float] | None:
+        if self.raises:
+            raise OSError("camera classifier error")
         return self._result
 
 
 def test_camera_returns_none_when_nothing_classified():
     source = HardwareCameraSource(classifier_source=_FakeClassifierSource(None))
+
+    assert source.read() is None
+
+
+def test_camera_returns_none_when_classifier_raises():
+    source = HardwareCameraSource(classifier_source=_FakeClassifierSource(None, raises=True))
 
     assert source.read() is None
 

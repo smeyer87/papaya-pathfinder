@@ -10,11 +10,20 @@ picamera2/IMX500) is bench-time work, not built here.
 """
 from __future__ import annotations
 
+import logging
 import time
 from typing import Callable, Protocol
 
 from papaya_mission.position_fusion import GpsFix, ImuReading
-from papaya_mission.sensor_hub import ObstacleDetection
+from papaya_mission.sensor_hub import (
+    CameraSource,
+    GpsSource,
+    ImuSource,
+    ObstacleDetection,
+    UltrasonicSource,
+)
+
+logger = logging.getLogger("papaya_mission.hardware_sensor_hub")
 
 
 class GpsLineSource(Protocol):
@@ -63,6 +72,9 @@ def _parse_gga(line: str, timestamp: float) -> GpsFix | None:
 
 
 class HardwareGpsSource:
+    """Reads NMEA GGA sentences from the injected line source and returns
+    the freshest valid GPS fix available this tick."""
+
     def __init__(self, line_source: GpsLineSource, clock: Callable[[], float] = time.monotonic) -> None:
         self._line_source = line_source
         self._clock = clock
@@ -70,7 +82,11 @@ class HardwareGpsSource:
     def read(self) -> GpsFix | None:
         fix: GpsFix | None = None
         while True:
-            raw = self._line_source.readline()
+            try:
+                raw = self._line_source.readline()
+            except Exception:
+                logger.warning("GPS line source raised while reading", exc_info=True)
+                break
             if not raw:
                 break
             try:
@@ -108,8 +124,12 @@ class HardwareImuSource:
         self._last_reading = ImuReading(heading_deg=0.0, forward_acceleration_mps2=0.0, timestamp=0.0)
 
     def read(self) -> ImuReading:
-        heading, _roll, _pitch = self._device.euler
-        _ax, forward_accel, _az = self._device.linear_acceleration
+        try:
+            heading, _roll, _pitch = self._device.euler
+            _ax, forward_accel, _az = self._device.linear_acceleration
+        except Exception:
+            logger.warning("IMU device raised while reading", exc_info=True)
+            return self._last_reading
         if heading is None or forward_accel is None:
             return self._last_reading
         reading = ImuReading(
@@ -141,7 +161,11 @@ class HardwareUltrasonicSource:
         self._pulse_measurer = pulse_measurer
 
     def read(self) -> ObstacleDetection | None:
-        pulse_us = self._pulse_measurer.measure_echo_pulse_us()
+        try:
+            pulse_us = self._pulse_measurer.measure_echo_pulse_us()
+        except Exception:
+            logger.warning("Ultrasonic pulse measurer raised while reading", exc_info=True)
+            return None
         if pulse_us is None:
             return None
         range_m = (pulse_us / 58.0) / 100.0
@@ -161,15 +185,25 @@ class ClassifierSource(Protocol):
 
 
 class HardwareCameraSource:
+    """Delegates to the injected classifier source and returns its current
+    classification, if any."""
+
     def __init__(self, classifier_source: ClassifierSource) -> None:
         self._classifier_source = classifier_source
 
     def read(self) -> tuple[str, float] | None:
-        return self._classifier_source.classify()
+        try:
+            return self._classifier_source.classify()
+        except Exception:
+            logger.warning("Camera classifier source raised while reading", exc_info=True)
+            return None
 
 
 class HardwareSensorHub:
-    def __init__(self, gps, imu, ultrasonic, camera) -> None:
+    """Plain bundling container for the four hardware sources -- no logic
+    of its own, just satisfies the SensorHub Protocol's attribute shape."""
+
+    def __init__(self, gps: GpsSource, imu: ImuSource, ultrasonic: UltrasonicSource, camera: CameraSource) -> None:
         self.gps = gps
         self.imu = imu
         self.ultrasonic = ultrasonic

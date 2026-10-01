@@ -9,7 +9,7 @@ class _FakeLcdWriter:
         self.writes.append((line1, line2))
 
 
-def _make_test_screens() -> list[Screen]:
+def _make_test_screens() -> tuple[list[Screen], list]:
     actions_taken = []
     return [
         Screen(name="a", render=lambda state: ("A1", "A2")),

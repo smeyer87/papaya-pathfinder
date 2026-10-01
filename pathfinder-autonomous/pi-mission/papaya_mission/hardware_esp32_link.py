@@ -91,8 +91,14 @@ class HardwareEsp32Link:
             if message_type == "bump":
                 self._pending_bump_events.append(BumpEvent(detected_at=datetime.now(timezone.utc)))
             elif message_type == "status":
-                self._halted_on_contact = bool(message.get("halted", False))
-                self._last_throttle = float(message.get("throttle", 0.0))
+                # Compute both values before assigning either, so a status
+                # message is applied atomically: if one field is malformed,
+                # the other field's prior value is left untouched rather
+                # than committing a partial update.
+                halted_on_contact = bool(message.get("halted", False))
+                last_throttle = float(message.get("throttle", 0.0))
+                self._halted_on_contact = halted_on_contact
+                self._last_throttle = last_throttle
             else:
                 logger.warning("Unknown message type from ESP32: %r", message_type)
         except (ValueError, TypeError) as e:

@@ -78,16 +78,26 @@ def test_non_dict_json_is_skipped_without_raising():
 
 
 def test_status_with_non_numeric_throttle_is_skipped_without_raising():
-    # Status message with non-numeric throttle should be skipped, but subsequent valid messages should process
+    # A malformed status message (non-numeric throttle) must be rejected
+    # atomically: its halted flag must NOT be committed either, even
+    # though "halted" alone would have parsed fine.
     transport = _FakeTransport([
+        _line({"type": "status", "halted": True, "throttle": 0.3}),
         _line({"type": "status", "halted": False, "throttle": "not-a-number"}),
-        _line({"type": "status", "halted": True, "throttle": 0.5}),
     ])
     link = HardwareEsp32Link(transport=transport, port="/dev/fake")
 
-    # First status is skipped, second one should set the values
     status = link.status()
+
+    # The malformed second message is skipped in full: halted_on_contact
+    # stays at the last valid message's value (True), not the rejected
+    # message's halted=False.
     assert status.halted_on_contact is True
+    assert link.read_drive_status().throttle_position == 0.3
+
+    # A subsequent valid message still processes normally.
+    transport._lines.append(_line({"type": "status", "halted": False, "throttle": 0.5}))
+    assert link.status().halted_on_contact is False
     assert link.read_drive_status().throttle_position == 0.5
 
 
