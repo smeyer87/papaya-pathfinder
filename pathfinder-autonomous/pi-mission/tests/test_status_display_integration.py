@@ -71,7 +71,7 @@ def test_status_display_renders_real_runtime_state_without_raising(tmp_path):
     assert len(lcd.writes) == 4
 
     position_line1, _position_line2 = lcd.writes[0]
-    assert "38.05" in position_line1  # a real fix rendered, not "GPS: no fix"
+    assert position_line1 == "38.0500,-85.0000"  # exact: guards against truncation regressions
 
     obstacles_line1, obstacles_line2 = lcd.writes[2]
     assert obstacles_line1 == "Obstacles: 1"
