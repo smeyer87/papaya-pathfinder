@@ -886,14 +886,21 @@ class MissionRuntime:
         # specifically (same idiom as the stop_sweep/abort_home branch
         # above) is the correct "a mission is actually underway" check.
         if self.sweep_session is not None and self.sweep_session.status == SweepSessionStatus.IN_PROGRESS:
-            # Raising (rather than silently returning) means the caller in
-            # _poll_and_handle_commands_if_due never acks this command, so
-            # the backend redelivers it next poll -- the OTA retries
-            # automatically once the mission pauses or ends, with no new
-            # ack/nack protocol needed.
+            # Raising means the caller in _poll_and_handle_commands_if_due
+            # never acks this command. NOTE: this does NOT mean the backend
+            # retries it -- poll_commands marks a returned command "delivered"
+            # and nothing moves a "delivered" command back to "pending", so an
+            # unacked command here is actually dropped, not redelivered. The
+            # operator must notice the refusal and manually re-issue the OTA
+            # once the mission has ended. (Backend-wide command redelivery is
+            # a real gap, logged separately -- see docs/phase2/inputs/00-inbox.md.)
+            logger.warning(
+                "refusing OTA update to %s -- a sweep session is in progress; this "
+                "command will NOT be retried automatically, re-issue it once the "
+                "mission ends", payload.get("firmware_path"),
+            )
             raise RuntimeError(
-                "refusing OTA update while a sweep session is in progress -- "
-                "will retry automatically once the mission pauses/ends"
+                "refusing OTA update while a sweep session is in progress"
             )
         self.esp32_link.trigger_ota(payload["firmware_path"])
 
