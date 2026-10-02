@@ -52,6 +52,25 @@ assumption as a decision is the most common way a design goes wrong.
   define shelter points in the map (CAP-3) the rover can reach if caught
   out.
 
+### A-2: Mild, mostly-flat farm terrain; major hazards geofenced out
+
+- **Why we believe it:** Stated directly 2026-10-02 as an operating
+  assumption — the farm terrain is "flat" by human standards (no major
+  hills, ditches, etc.); anything significant gets placed in a geofence
+  exclusion zone (CAP-3) rather than designed around mechanically.
+  Target operating condition is "human walking pace" over mildly uneven
+  ground, including washboarding, while performing obstacle detection/
+  tracking missions — not high-speed off-road use, and not the abuse
+  profile hobby off-road RC trucks are built to survive.
+- **How to verify:** Confirms the suspension spec for PLT-7 (modest
+  travel, soft spring rate — damping frequent small washboard impulses
+  at low speed, not hard impacts) and informs Q-11's leaning (small
+  disagreement between independent front/rear differentials at this
+  terrain scale may not need a dedicated chassis torsion joint). Also
+  the reason the existing pin failures count as a "Must fix," not an
+  edge case — they're already occurring inside this normal operating
+  envelope, not a worse one.
+
 ## Decisions already made
 
 ### D-1: Cellular out of scope for Version 2
@@ -129,6 +148,49 @@ assumption as a decision is the most common way a design goes wrong.
   interfaces (UART/I2C/CSI) present on every Pi model, and Pi 5's RP1
   chip in particular makes extra UARTs easy to enable via device-tree
   overlays if GPS and a Pi↔ESP32 UART link ever needed to coexist.
+
+### D-7: Weight-budget-by-height for the enlarged payload bay
+
+- **Decision:** In the redesigned (substantially larger) payload bay,
+  keep the heaviest single component — almost certainly the battery —
+  as low and as centered (both fore-aft and side-to-side) as the bay
+  allows. Use the *added* height/length/width for lighter components
+  (wiring, LCD, ESP32, antennas).
+- **Reason:** The bay is growing enough (PLT-5: minimum +6–9" length,
+  +3–5" height/depth, proportional width) to meaningfully raise and
+  shift center of gravity versus today's nominal CoG — a taller/longer
+  box risks worse rollover stability on slopes/turns and an unbalanced
+  fore-aft shift if mass isn't placed deliberately. This guideline holds
+  regardless of how Q-9 (6-vs-8-wheel) resolves, so it's logged as a
+  decision rather than left open.
+
+### D-8: Steered wheel position within each 2×2 axle pair (if Q-9 → 8-wheel)
+
+- **Decision:** If Q-9 resolves toward 8 wheels (two independent 2-wheel
+  pivot pairs per side, front and rear), the steering servo stays on the
+  **outer** wheel of each pair — the front-most wheel of the front pair,
+  the rear-most wheel of the rear pair — i.e. whichever end sits at the
+  true chassis corner, same as today. The inner wheel of each pair
+  (closer to the chassis center) is drive-only, not steered.
+- **Reason:** This isn't a new load case — the current 6-wheel design's
+  rear "pair" (middle wheel + rear corner wheel) already has exactly
+  this shape: the outer member (rear corner) is steered, the inner
+  member (middle) isn't. Extending the same pattern to the front
+  preserves the existing 4-corner independent-steer geometry that gives
+  the rover its tight turning today. Turning tightness comes from
+  coordinating each corner's steer angle (plus skid-steer differential)
+  relative to the turn center, not from wheelbase length, so the longer
+  wheelbase from PLT-5's bay growth doesn't cap how tight the rover can
+  turn — it does mean the steering-angle/trim mapping needs
+  re-deriving for the new corner-to-corner distances once real
+  dimensions are set, the same category of work as the `TRIM_LF/RF/LB/RB`
+  re-zero already done once for the DS3218 horns (`CHANGELOG.md`
+  v1.0.0) — expected follow-on work, not a new risk.
+- **Watch for PLT-7:** the outer-wheel-steered pattern puts more
+  cornering-load leverage on that pair's pivot bracket than a wheel
+  mounted directly at a main chassis pivot. Already true of today's rear
+  bogie, so it's a known load case to design against, not an unknown
+  one — but the suspension design should account for it explicitly.
 
 ## Open questions
 
@@ -209,6 +271,75 @@ These become the agenda for the design session.
   model up front and refine later.
 - **Leaning:** Collect data during MP-1 runs first; refine over time.
 - **Blocks:** D-4, CAP-11.
+
+### Q-9: 6-wheel vs 8-wheel drivetrain
+
+- **Options considered:** Keep the current 6-wheel rocker-bogie layout
+  (3 wheels/side, 4 corner steering servos, suspension/strain fix
+  applied to the existing axles — PLT-7); expand to 8 wheels as two
+  independent 2×2 axle pairs per side, pivoting at front and rear mount
+  points on the payload bay, keeping the same 4 corner steering servos
+  and adding one DC drive motor per side (2 new motors total), plus the
+  added battery load those motors draw.
+- **Leaning (updated 2026-10-02):** Leaning toward 8-wheel. The real
+  driver turns out not to be the servo-connector-strain problem (PLT-7
+  needs fixing either way, independent of wheel count) but the bay-size
+  growth itself (PLT-5): the existing design is one 3-wheel bogie arm
+  per side, sized for the current wheelbase — it has no "stretch" left
+  once the bay grows a confirmed minimum of 6–9" longer. Two independent
+  2×2 pivot pairs (front/rear) let the wheelbase scale with the longer
+  bay while repositioning wheels to distribute load evenly fore-aft (and
+  side-to-side, if the stance also widens) — something the current
+  single-arm geometry can't do by just stretching. Electrically close to
+  free: confirmed 2026-10-02 the current 6 motors are already ganged
+  3-per-side onto a single BTS7960 H-bridge channel per side
+  (`pathfinder-autonomous/README.md`), so a 4th motor per side can gang
+  onto the same existing channel — no new GPIO/`CON-B2` conflict,
+  pending a check that each BTS7960 can handle 4 motors' combined stall
+  current instead of 3.
+- **Blocks:** PLT-7 (axle/suspension design, co-designed with this, not
+  sequenced before it), PLT-8/Q-10 (very likely needs a second rear
+  transverse link, not just "possibly" — see Q-10), PLT-9 (CoG/stance
+  tradeoff), power budget (PWR items, D-4 Bingo Fuel model).
+
+### Q-10: Second rear transverse pivot link (depends on Q-9)
+
+- **Options considered:** A single transverse link, as today, relocated
+  underneath the chassis per PLT-8 (sufficient if the 6-wheel layout is
+  kept); two transverse links — one per 2×2 axle pair, front and rear —
+  each independently equalizing its own pair's wheel contact, if the
+  8-wheel option in Q-9 is adopted.
+- **Leaning (updated 2026-10-02):** If Q-9 resolves toward 8-wheel as
+  two genuinely independent pivot pairs (not one arm spanning all 4
+  wheels per side), this is very likely "yes, two links" rather than an
+  optional extra — each independently-pivoting pair needs its own
+  equalizer to keep the body level, the same reason the single pair
+  needs one today. Not yet verified against real geometry.
+- **Blocks:** PLT-8.
+
+### Q-11: Chassis torsional compliance with two independent transverse differentials
+
+- **Options considered:** Rely on existing structural give in the
+  payload-bay body/mounts to absorb any disagreement between the front
+  and rear differentials (no new part); add an explicit torsional pivot
+  along the chassis spine — a dedicated rotational joint letting the
+  front half and rear half of the body twist relative to each other,
+  independent of the per-side fore-aft "pivot"/"bogey" joints and
+  separate from the transverse differentials themselves.
+- **Why this matters:** Today's single, central transverse differential
+  gives one well-determined relationship between left/right rocker angle
+  and body roll. Two *independent* differentials (front + rear, per
+  Q-9/Q-10) can each separately try to set the body's attitude from
+  their own end's ground contact — if they disagree and the chassis is
+  perfectly rigid between them, the linkages fight each other instead of
+  both doing their terrain-following job, which risks a wheel losing
+  ground contact or extra stress dumped into the mounting hardware.
+- **Leaning:** Not stated — open, but A-2's mild-terrain assumption
+  (small washboard bumps mean small disagreement between the two ends)
+  suggests trying the no-new-part option first; this is a "build it and
+  see if it binds" question better answered by physical testing once
+  both transverse links exist than by analysis alone.
+- **Blocks:** PLT-8, Q-10.
 
 ## Raw notes
 

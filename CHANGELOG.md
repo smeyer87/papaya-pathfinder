@@ -11,6 +11,30 @@ All notable changes to this project are documented here. Versioning follows
 - **PATCH** — fixes, tuning, and small additions (e.g. trim values, BOM
   entries, doc updates).
 
+## [2.2.3] - 2026-10-02
+
+### Added
+- `docs/adr/0004-wheeled-vs-tracked-drivetrain.md` — architecture decision
+  record for keeping the wheeled rocker-bogie drivetrain over tracked/
+  caterpillar, mecanum/omni, fully-independent-suspension, and legged
+  alternatives, all considered and rejected in favor of retrofitting
+  suspension at the one joint that's actually failing.
+- `docs/phase2/inputs/04-physical-platform.md` / `05-assumptions-
+  decisions.md`: first-pass mechanical/physical architecture
+  brainstorm for the Phase 2 rebuild — payload bay enclosure-vs-
+  footprint conflict and scale (PLT-5), a corrected diagnosis of the
+  recurring wheel-strut failure as a 3D-printed steering-pivot pin
+  carrying structural/impact load it was never sized for rather than
+  an electrical connector (PLT-7), relocating the top-mounted
+  transverse pivot link underneath the chassis (PLT-8), center-of-
+  gravity weight budgeting for the larger bay (PLT-9, D-7), 6-vs-8-wheel
+  drivetrain and steered-wheel-position decisions (Q-9, D-8), the
+  second rear transverse link and chassis-torsion questions a dual-
+  differential layout raises (Q-10, Q-11), the farm-terrain/walking-
+  pace operating envelope (A-2), and drive-motor weatherproofing
+  options. All open items are logged as open (TBD/leaning), not
+  decided — follow-on discussion continues in a future session.
+
 ## [2.2.2] - 2026-10-02
 
 ### Added
