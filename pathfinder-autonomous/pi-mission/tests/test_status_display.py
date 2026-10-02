@@ -115,3 +115,23 @@ def test_drive_screen_still_shows_running_for_an_explicit_false():
     _line1, line2 = drive_screen.render({"halted_on_contact": False})
 
     assert line2 == "running"
+
+
+def test_drive_screen_shows_throttle_unknown_when_throttle_position_is_absent():
+    from papaya_mission.status_display import DEFAULT_SCREENS
+
+    drive_screen = next(s for s in DEFAULT_SCREENS if s.name == "drive")
+
+    line1, _line2 = drive_screen.render({})
+
+    assert line1 == "Throttle: ?"
+
+
+def test_drive_screen_still_shows_zero_throttle_for_an_explicit_zero():
+    from papaya_mission.status_display import DEFAULT_SCREENS
+
+    drive_screen = next(s for s in DEFAULT_SCREENS if s.name == "drive")
+
+    line1, _line2 = drive_screen.render({"throttle_position": 0.0})
+
+    assert line1 == "Throttle: 0.00"

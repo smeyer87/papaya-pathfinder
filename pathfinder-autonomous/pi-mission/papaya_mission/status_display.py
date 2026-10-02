@@ -56,7 +56,14 @@ def _render_obstacles(state: dict[str, Any]) -> tuple[str, str]:
 
 
 def _render_drive(state: dict[str, Any]) -> tuple[str, str]:
-    throttle = state.get("throttle_position", 0.0)
+    if "throttle_position" not in state:
+        # Absent, not 0.0: same ESP32-status-read-failed (or no-sample-yet)
+        # gap as halted_on_contact below -- see MissionRuntime
+        # ._sample_telemetry_if_due. A missing throttle reading is not a
+        # confirmed zero throttle.
+        line1 = "Throttle: ?"
+    else:
+        line1 = f"Throttle: {state['throttle_position']:.2f}"
     if "halted_on_contact" not in state:
         # Absent, not False: either the ESP32 status read failed this
         # sample (see MissionRuntime._sample_telemetry_if_due) or no
@@ -64,7 +71,7 @@ def _render_drive(state: dict[str, Any]) -> tuple[str, str]:
         status_text = "LINK?"
     else:
         status_text = "HALTED" if state["halted_on_contact"] else "running"
-    return (f"Throttle: {throttle:.2f}", status_text)
+    return (line1, status_text)
 
 
 DEFAULT_SCREENS: list[Screen] = [

@@ -103,7 +103,10 @@ def test_status_display_shows_link_unknown_when_esp32_status_read_fails(tmp_path
     def _boom():
         raise RuntimeError("esp32 link dropped")
 
+    # A dropped Pi<->ESP32 link fails both calls together, since both
+    # status() and read_drive_status() drain the same serial transport.
     runtime.esp32_link.status = _boom
+    runtime.esp32_link.read_drive_status = _boom
     runtime._last_telemetry_sample_monotonic = 0.0  # force a sample this tick
     runtime.tick()  # must not raise
 
@@ -113,4 +116,6 @@ def test_status_display_shows_link_unknown_when_esp32_status_read_fails(tmp_path
         display.next_screen()
     display.refresh(runtime.last_telemetry_readings)
 
-    assert lcd.writes[0][1] == "LINK?"
+    drive_line1, drive_line2 = lcd.writes[0]
+    assert drive_line1 == "Throttle: ?"
+    assert drive_line2 == "LINK?"
