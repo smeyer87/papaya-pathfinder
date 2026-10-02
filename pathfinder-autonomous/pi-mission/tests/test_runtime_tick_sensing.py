@@ -24,7 +24,7 @@ def _handler(rover, geofences):
         if request.url.path.startswith("/geofences/"):
             fid = request.url.path.rsplit("/", 1)[-1]
             return httpx.Response(200, json=next(g for g in geofences if g["_id"] == fid))
-        if request.url.path == "/commands/poll/rover-1":
+        if request.url.path.startswith("/commands/poll/"):
             # See test_digital_twin_scenarios.py's _handler for the full
             # rationale -- same fix, same reason.
             return httpx.Response(200, json=[])
@@ -650,3 +650,15 @@ def test_live_only_fields_are_never_synced_to_the_telemetry_record(tmp_path):
     metrics = local_store.list_unsynced_telemetry(runtime.conn)[-1]["metrics"]
     for key in ("obstacle_count", "last_obstacle_type", "halted_on_contact"):
         assert key not in metrics  # live-only; deliberately not synced
+
+
+def test_command_poll_does_not_crash_when_due(tmp_path):
+    """Regression test for the flakiness fix: backdates the command-poll
+    timer to force /commands/poll/rover-1 to fire deterministically on this
+    tick, rather than relying on a full-suite stall to trigger it by luck.
+    """
+    hub = SimulatedSensorHub(INITIAL_IMU)
+    runtime = _make_started_runtime(tmp_path, sensor_hub=hub)
+    runtime._last_command_poll_monotonic = 0.0  # force a poll this tick
+
+    runtime.tick()  # must not raise

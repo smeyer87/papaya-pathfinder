@@ -21,7 +21,7 @@ def _handler(rover, geofences):
         if request.url.path.startswith("/geofences/"):
             fid = request.url.path.rsplit("/", 1)[-1]
             return httpx.Response(200, json=next(g for g in geofences if g["_id"] == fid))
-        if request.url.path == "/commands/poll/rover-1":
+        if request.url.path.startswith("/commands/poll/"):
             # See test_digital_twin_scenarios.py's _handler for the full
             # rationale -- same fix, same reason.
             return httpx.Response(200, json=[])
@@ -123,3 +123,28 @@ def test_status_display_shows_link_unknown_when_esp32_status_read_fails(tmp_path
     drive_line1, drive_line2 = lcd.writes[0]
     assert drive_line1 == "Throttle: ?"
     assert drive_line2 == "LINK?"
+
+
+def test_command_poll_does_not_crash_when_due(tmp_path):
+    """Regression test for the flakiness fix: backdates the command-poll
+    timer to force /commands/poll/rover-1 to fire deterministically on this
+    tick, rather than relying on a full-suite stall to trigger it by luck.
+    """
+    rover = {"_id": "rover-1", "name": "George", "length_m": 0.6, "turn_style": "spin_in_place"}
+    inclusive = {"_id": "fence-1", "type": "inclusive", "boundary": {"type": "Polygon", "coordinates": [FIELD_RING]}}
+    client = httpx.Client(transport=httpx.MockTransport(_handler(rover, [inclusive])))
+    hub = SimulatedSensorHub(INITIAL_IMU)
+    esp32 = FakeEsp32Link()
+    runtime = MissionRuntime(
+        rover_id="rover-1",
+        backend_base_url="http://backend.local",
+        local_db_path=str(tmp_path / "test.db"),
+        sensor_hub=hub,
+        esp32_link=esp32,
+        http_client=client,
+    )
+    runtime.startup()
+    runtime.handle_start_sweep({"geofence_id": "fence-1"})
+    runtime._last_command_poll_monotonic = 0.0  # force a poll this tick
+
+    runtime.tick()  # must not raise

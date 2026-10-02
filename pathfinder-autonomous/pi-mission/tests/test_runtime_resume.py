@@ -26,7 +26,7 @@ def _handler(rover, geofences):
             fid = request.url.path.rsplit("/", 1)[-1]
             match = next(g for g in geofences if g["_id"] == fid)
             return httpx.Response(200, json=match)
-        if request.url.path == "/commands/poll/rover-1":
+        if request.url.path.startswith("/commands/poll/"):
             # See test_digital_twin_scenarios.py's _handler for the full
             # rationale -- same fix, same reason.
             return httpx.Response(200, json=[])
@@ -283,3 +283,19 @@ def test_resume_seeds_last_obstacle_type_using_confirmed_time_when_available(tmp
     # obs-first's first_detected_at (10:01:00) is more recent than
     # obs-reconfirmed's OWN first_detected_at (10:00:30).
     assert runtime._last_obstacle_type == "cone"
+
+
+def test_command_poll_does_not_crash_when_due(tmp_path):
+    """Regression test for the flakiness fix: backdates the command-poll
+    timer to force /commands/poll/rover-1 to fire deterministically on this
+    tick, rather than relying on a full-suite stall to trigger it by luck.
+    _make_runtime's own helper never calls tick() -- every other test in
+    this file only calls startup() -- so this test drives tick() itself.
+    """
+    rover = {"_id": "rover-1", "name": "George"}
+    inclusive = {"_id": "fence-1", "type": "inclusive", "boundary": {"type": "Polygon", "coordinates": [FIELD_RING]}}
+    runtime, _ = _make_runtime(tmp_path, rover, geofences=[inclusive])
+    runtime.startup()
+    runtime._last_command_poll_monotonic = 0.0  # force a poll this tick
+
+    runtime.tick()  # must not raise

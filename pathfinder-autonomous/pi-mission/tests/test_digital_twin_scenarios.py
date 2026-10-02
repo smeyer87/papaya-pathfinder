@@ -18,7 +18,7 @@ def _handler(rover, geofences):
         if request.url.path.startswith("/geofences/"):
             fid = request.url.path.rsplit("/", 1)[-1]
             return httpx.Response(200, json=next(g for g in geofences if g["_id"] == fid))
-        if request.url.path == "/commands/poll/rover-1":
+        if request.url.path.startswith("/commands/poll/"):
             # This test doesn't exercise command polling -- it just needs the
             # poll to not crash if MissionRuntime's 1-second cadence
             # (COMMAND_POLL_INTERVAL_S) happens to fire mid-test under
@@ -106,3 +106,15 @@ def test_gps_unavailable_triggers_stop_and_alert(tmp_path):
     runtime.tick()
 
     assert runtime.mission_alert == "gps_stop_and_alert"
+
+
+def test_command_poll_does_not_crash_when_due(tmp_path):
+    """Regression test for the flakiness fix: backdates the command-poll
+    timer to force /commands/poll/rover-1 to fire deterministically on this
+    tick, rather than relying on a full-suite stall to trigger it by luck.
+    """
+    world = TwinWorld(start_lat=38.05, start_lon=-85.0)
+    runtime = _make_started_runtime(tmp_path, world)
+    runtime._last_command_poll_monotonic = 0.0  # force a poll this tick
+
+    runtime.tick()  # must not raise
