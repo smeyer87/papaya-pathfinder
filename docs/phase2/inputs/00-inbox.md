@@ -69,18 +69,14 @@ autonomous drive-command channel exists yet to override).
 From the final whole-branch review of
 `docs/superpowers/plans/2026-10-01-status-display-runtime-gap.md`:
 
-- **Drive screen can't distinguish "confirmed not halted" from "couldn't
-  read the ESP32's status this sample."** `_sample_telemetry_if_due`
-  correctly omits `halted_on_contact` from the live snapshot when
-  `esp32_link.status()` raises (rather than asserting a not-halted state
-  it can't confirm), but `_render_drive`'s `state.get("halted_on_contact",
-  False)` then reads that omission as "not halted" and the LCD says
-  "running" — in exactly the situation (a dropped Pi↔ESP32 link) a bench
-  operator would be staring at the screen to debug. Strictly better than
-  before this branch (the field didn't exist at all), but the honest fix
-  needs a third display state (e.g. "LINK?"/"UNKNOWN") in
-  `_render_drive`/`status_display.py`, which that plan's additive-only
-  scope forbade touching.
+- **FIXED (2026-10-01):** Drive screen couldn't distinguish "confirmed not
+  halted" from "couldn't read the ESP32's status this sample" (and had the
+  identical gap for `throttle_position`). `_render_drive` now checks for
+  key absence explicitly for both fields: `halted_on_contact` absent shows
+  "LINK?" instead of a false "running", and `throttle_position` absent
+  shows "Throttle: ?" instead of a false "Throttle: 0.00". See
+  `docs/superpowers/sdd/2026-10-01-drive-screen-halted-ambiguity/` for the
+  fix plan and tests.
 - **A resumed (not fresh) sweep session restarts `obstacle_count` at 0**
   instead of seeding it from the obstacles already persisted for that
   session. `handle_start_sweep` resets the counter; `_resume_in_progress_
@@ -104,3 +100,19 @@ From the final whole-branch review of
   (`test_live_only_fields_are_never_synced_to_the_telemetry_record`), so
   future work has to touch that test deliberately, not drift into it by
   accident.
+- **`hardware_esp32_link.py:98`'s `bool(message.get("halted", False))` has
+  the same absent-vs-default pattern one layer down.** A `status` message
+  missing its `"halted"` key silently resets `_halted_on_contact` to
+  `False`, which could clear a latched halt. Depends on the ESP32
+  firmware's actual message contract, which isn't built yet — flag it as
+  something to check once the real firmware's message shapes are known,
+  not something to fix now.
+- **Full-suite test runs occasionally show 3-4 unrelated test failures**
+  (`tests/test_digital_twin_scenarios.py`,
+  `tests/test_hardware_drivers_integration.py`) that always pass in
+  isolation — looks like wall-clock sensitivity (tests manipulate
+  monotonic state directly while runtime code compares against real
+  `time.monotonic()`, so a slow/cold full-suite run can cross a threshold
+  mid-test). Pre-existing, unrelated to any specific plan; worth a
+  dedicated look (e.g. injecting a fake clock into the affected runtime
+  checks) at some point.
