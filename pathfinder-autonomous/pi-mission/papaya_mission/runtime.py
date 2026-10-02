@@ -596,10 +596,16 @@ class MissionRuntime:
         )
 
     def _save_obstacle(self, obstacle, *, obstacle_id: str | None = None) -> None:
-        # Counted regardless of whether a session exists to persist a row to
-        # below -- the rover reacted to this obstacle either way, which is
-        # what the live counter reports.
-        self._obstacle_count += 1
+        # obstacle_id is supplied only by a confirmed re-detection during
+        # resume validation (an upsert of a row already counted in the
+        # seeded baseline from _resume_in_progress_session_if_any) -- only a
+        # genuinely new detection (no existing id) should grow the count, or
+        # a resume pass that re-confirms M pre-crash obstacles would report
+        # N + M instead of N. The type still updates either way: a
+        # re-confirmation is the most recent obstacle-related event, same as
+        # a new one, so it is still what the LCD should show.
+        if obstacle_id is None:
+            self._obstacle_count += 1
         self._last_obstacle_type = obstacle.type
         if self.sweep_session is None:
             # MP-1's obstacle tracking is scoped to sweep sessions: the local

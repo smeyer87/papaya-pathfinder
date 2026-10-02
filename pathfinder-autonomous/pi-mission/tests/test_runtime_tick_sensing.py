@@ -457,6 +457,11 @@ def test_confirmed_redetection_during_resume_pass_saves_exactly_one_row(tmp_path
     assert rows[0]["last_confirmed_at"] is not None  # refreshed in place
     assert rows[0]["first_detected_at"] == PRE_CRASH_DETECTED_AT
     assert len(local_store.list_unsynced_obstacles(runtime.conn)) == 1
+    # The LCD counter was seeded at 1 for this one pre-crash obstacle (see
+    # _resume_in_progress_session_if_any). Re-confirming it here is an upsert
+    # of that same obstacle, not a new one -- the count must stay at 1, not
+    # grow to 2.
+    assert runtime._obstacle_count == 1
 
 
 def test_two_known_obstacles_at_one_position_keep_separate_identities(tmp_path):
