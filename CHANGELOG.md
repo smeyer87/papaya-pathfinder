@@ -11,6 +11,26 @@ All notable changes to this project are documented here. Versioning follows
 - **PATCH** — fixes, tuning, and small additions (e.g. trim values, BOM
   entries, doc updates).
 
+## [2.2.2] - 2026-10-02
+
+### Added
+- `MissionRuntime` gained an `ota_update` command handler: refuses to
+  trigger an ESP32 firmware flash while a sweep session is actively in
+  progress (checking session *status*, not mere presence — a session is
+  never reset to `None` after a mission ends, so a presence-only check
+  would have blocked OTA forever after the rover's first mission).
+
+### Fixed
+- A refused OTA command was believed to retry automatically via backend
+  redelivery; the final review found this is false — the backend never
+  moves a `"delivered"` command back to `"pending"`, so it was actually
+  dropped permanently. The refusal itself was always correct and safe;
+  only the retry claim was wrong. Corrected the code comments and docs,
+  and added an explicit log line so a deliberate refusal is now
+  distinguishable from a genuine fault. The backend-wide redelivery gap
+  (affecting every command type, not just OTA) is logged as a follow-up,
+  not fixed in this release.
+
 ## [2.2.1] - 2026-10-02
 
 ### Fixed
