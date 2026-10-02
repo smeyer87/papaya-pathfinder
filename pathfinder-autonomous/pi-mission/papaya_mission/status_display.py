@@ -40,7 +40,13 @@ def _render_position(state: dict[str, Any]) -> tuple[str, str]:
     if position is None or heading is None:
         return ("GPS: no fix", "")
     lon, lat = position
-    return (f"{lat:.5f},{lon:.5f}", f"Hdg {heading:.0f} deg")
+    # 4 decimal places (not 5): fits exactly 16 characters for this
+    # rover's realistic coordinate range (2-digit latitude, up to
+    # 3-digit-signed longitude) -- 5 decimals renders to 18 characters
+    # here and StatusDisplay.refresh silently truncates the overflow.
+    # ~11m of precision at this latitude, already finer than the GPS
+    # accuracy heuristic's own resolution (accuracy_m = hdop * 5.0).
+    return (f"{lat:.4f},{lon:.4f}", f"Hdg {heading:.0f} deg")
 
 
 def _render_mission(state: dict[str, Any]) -> tuple[str, str]:

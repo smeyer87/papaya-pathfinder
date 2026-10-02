@@ -135,3 +135,15 @@ def test_drive_screen_still_shows_zero_throttle_for_an_explicit_zero():
     line1, _line2 = drive_screen.render({"throttle_position": 0.0})
 
     assert line1 == "Throttle: 0.00"
+
+
+def test_position_screen_fits_within_sixteen_characters():
+    from papaya_mission.status_display import DEFAULT_SCREENS
+
+    position_screen = next(s for s in DEFAULT_SCREENS if s.name == "position")
+
+    line1, line2 = position_screen.render({"position": [-85.0, 38.05], "heading_deg": 90.0})
+
+    assert line1 == "38.0500,-85.0000"
+    assert len(line1) == 16
+    assert line2 == "Hdg 90 deg"
