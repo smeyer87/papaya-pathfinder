@@ -18,6 +18,14 @@ def _handler(rover, geofences):
         if request.url.path.startswith("/geofences/"):
             fid = request.url.path.rsplit("/", 1)[-1]
             return httpx.Response(200, json=next(g for g in geofences if g["_id"] == fid))
+        if request.url.path == "/commands/poll/rover-1":
+            # This test doesn't exercise command polling -- it just needs the
+            # poll to not crash if MissionRuntime's 1-second cadence
+            # (COMMAND_POLL_INTERVAL_S) happens to fire mid-test under
+            # full-suite system load, even though this test is fast in
+            # isolation. An empty list is exactly what a real backend
+            # returns when nothing is queued.
+            return httpx.Response(200, json=[])
         raise AssertionError(request.url.path)
 
     return handler

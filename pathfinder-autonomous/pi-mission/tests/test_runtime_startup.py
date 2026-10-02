@@ -23,6 +23,10 @@ def _handler_for(rover: dict, geofences: list[dict]):
             return httpx.Response(200, json=geofences[0])
         if request.url.path == "/geofences":
             return httpx.Response(200, json=geofences)
+        if request.url.path == "/commands/poll/rover-1":
+            # See test_digital_twin_scenarios.py's _handler for the full
+            # rationale -- same fix, same reason.
+            return httpx.Response(200, json=[])
         raise AssertionError(f"unexpected request: {request.url.path}")
 
     return handler

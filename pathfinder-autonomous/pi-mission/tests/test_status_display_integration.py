@@ -21,6 +21,10 @@ def _handler(rover, geofences):
         if request.url.path.startswith("/geofences/"):
             fid = request.url.path.rsplit("/", 1)[-1]
             return httpx.Response(200, json=next(g for g in geofences if g["_id"] == fid))
+        if request.url.path == "/commands/poll/rover-1":
+            # See test_digital_twin_scenarios.py's _handler for the full
+            # rationale -- same fix, same reason.
+            return httpx.Response(200, json=[])
         raise AssertionError(request.url.path)
 
     return handler
