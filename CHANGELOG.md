@@ -11,6 +11,48 @@ All notable changes to this project are documented here. Versioning follows
 - **PATCH** — fixes, tuning, and small additions (e.g. trim values, BOM
   entries, doc updates).
 
+## [2.2.0] - 2026-10-02
+
+### Added
+- **Pi Mission Runtime (MP-1)**: the full `pathfinder-autonomous/pi-mission`
+  Python client. A local SQLite store; `SensorHub`/`Esp32Link` interfaces
+  with simulated/fake implementations for hardware-free testing; a backend
+  read/poll client; and `MissionRuntime` itself — startup and resume-after-
+  restart handling, `start_sweep`, a tick loop covering position fusion,
+  obstacle detection, exclusion-zone and GPS-loss safety checks, command
+  dispatch, telemetry cadence, Home-return sync, and a CLI entrypoint.
+- **Digital-twin simulator** (`digital_twin.py`): a coherent simulated
+  rover world (position/heading/speed, an autonomous bounded mast sweep,
+  bounded GPS jitter, bump/halt detection) that derives consistent sensor
+  readings from one shared state, so development and testing can continue
+  end-to-end without physical hardware.
+- **Breadboard bench rig hardware drivers**: `hardware_esp32_link.py` (a
+  real `Esp32Link` over an injected UART transport), `hardware_sensor_hub.py`
+  (GPS NMEA parsing, IMU, ultrasonic, and camera sources), and
+  `status_display.py` (an LCD status display with screen cycling and
+  soft-key dispatch) — every hardware dependency is injected against a
+  `Protocol`, so none of this requires real hardware libraries to test.
+- `MissionRuntime.last_telemetry_readings`, a live per-session obstacle
+  counter, and ESP32 halted-on-contact status, wired into the LCD status
+  display so it renders real runtime state end-to-end (deliberately kept
+  out of the synced telemetry record for now — syncing it to ground
+  control is a good longer-term idea, not built yet).
+
+### Fixed
+- The LCD drive screen couldn't distinguish "confirmed not halted" /
+  "confirmed zero throttle" from "the status or drive-status read just
+  failed" — both rendered identically.
+- Resuming an interrupted sweep session after a process restart didn't
+  seed the obstacle counter from obstacles already persisted for that
+  session, and a confirmed re-detection during resume validation was
+  double-counted against it.
+- The LCD position screen's coordinate format silently overflowed the
+  16-character display width and truncated longitude.
+- A confirmed source of full-suite `pi-mission` test flakiness: two of
+  `MissionRuntime`'s interval-gated timers (command-poll, telemetry-sample)
+  could legitimately fire mid-test under system load, hitting test
+  fixtures that hadn't been written to expect them.
+
 ## [2.1.0] - 2026-09-26
 
 ### Added
