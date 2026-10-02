@@ -63,3 +63,44 @@ ties naturally to the existing `pause_sweep`/`abort_home` command
 handling already in `MissionRuntime`. Reserve an LCD screen/function-key
 slot for this later; not built as part of the breadboard itself (no
 autonomous drive-command channel exists yet to override).
+
+## StatusDisplay follow-ups from the runtime-state-gap plan (2026-10-01)
+
+From the final whole-branch review of
+`docs/superpowers/plans/2026-10-01-status-display-runtime-gap.md`:
+
+- **Drive screen can't distinguish "confirmed not halted" from "couldn't
+  read the ESP32's status this sample."** `_sample_telemetry_if_due`
+  correctly omits `halted_on_contact` from the live snapshot when
+  `esp32_link.status()` raises (rather than asserting a not-halted state
+  it can't confirm), but `_render_drive`'s `state.get("halted_on_contact",
+  False)` then reads that omission as "not halted" and the LCD says
+  "running" — in exactly the situation (a dropped Pi↔ESP32 link) a bench
+  operator would be staring at the screen to debug. Strictly better than
+  before this branch (the field didn't exist at all), but the honest fix
+  needs a third display state (e.g. "LINK?"/"UNKNOWN") in
+  `_render_drive`/`status_display.py`, which that plan's additive-only
+  scope forbade touching.
+- **A resumed (not fresh) sweep session restarts `obstacle_count` at 0**
+  instead of seeding it from the obstacles already persisted for that
+  session. `handle_start_sweep` resets the counter; `_resume_in_progress_
+  session_if_any` doesn't set it. The counter's own spec says it reports
+  "this mission," and a resumed session is the same mission — a one-liner
+  at the resume-arming site (count `local_store.list_obstacles_for_
+  session(...)` for that session) would fix it, but neither the spec nor
+  plan called for it, so it's an open design question, not a bug.
+- **The position screen's `f"{lat:.5f},{lon:.5f}"` can exceed the LCD's
+  16-char width and silently truncates** (e.g. `"38.05000,-85.000"` —
+  longitude's last digit(s) cut off). Pre-existing `status_display.py`
+  formatting, unrelated to any particular plan — first made visible by
+  the runtime-state-gap plan's own integration test. Worth re-checking
+  once real GPS fixes (not test coordinates) are in hand at the bench.
+- **Syncing `obstacle_count`/`last_obstacle_type`/`halted_on_contact` to
+  ground control** was explicitly deferred during that plan's
+  brainstorming (kept local/live-only, read via
+  `MissionRuntime.last_telemetry_readings`, deliberately kept out of
+  `MP1_EXPECTED_METRICS`/the backend sync path) — a good long-term idea,
+  not built there. A regression test now locks in that the deferral holds
+  (`test_live_only_fields_are_never_synced_to_the_telemetry_record`), so
+  future work has to touch that test deliberately, not drift into it by
+  accident.
