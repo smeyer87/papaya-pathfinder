@@ -103,31 +103,54 @@ and [`../../../pathfinder/BOM.md`](../../../pathfinder/BOM.md).
 ### SEN-5: IMU (Inertial Measurement Unit)
 
 - **Supports:** CAP-9, CAP-3
-- **Candidates:** Not yet specified at the exact-SKU level, but the
-  interface class is settled: I2C (4-wire, shares a bus trivially with
-  other I2C devices — near-zero pinout risk). Lean toward a 9-DOF part
-  with a magnetometer (MPU-9250/ICM-20948-class, or BNO055 for onboard
-  sensor fusion) rather than a bare 6-DOF accel/gyro-only part (e.g.
-  MPU-6050), since `papaya_mission.position_fusion.ImuReading.heading_deg`
-  is a compass heading, which a 6-DOF part can't directly provide.
-  Exact SKU deferred — not a breadboard blocker.
+- **Interface class settled:** I2C (4-wire, shares a bus trivially with
+  other I2C devices — near-zero pinout risk). 9-DOF with a magnetometer
+  (not a bare 6-DOF accel/gyro-only part like the MPU-6050), since
+  `papaya_mission.position_fusion.ImuReading.heading_deg` is a compass
+  heading, which a 6-DOF part can't directly provide.
+- **Purchased for bench evaluation, both NRND (2026-09-30):** Adafruit
+  BNO055 (onboard sensor fusion — fastest path to a working
+  `heading_deg`) and SparkFun ICM-20948 board. Both fine for breadboard
+  eval, but **not for the permanent PCB** — BNO055 is NRND, and the
+  ICM-20948 faces an imminent Last-Time-Delivery (~2026-10-30) because
+  AKM is discontinuing the AK09916C magnetometer it depends on. TDK's
+  own suggested replacement path: ICM-42688-P/42670-P (6-axis only) plus
+  a separate current magnetometer — the QMC5883L already bundled on the
+  spare MicroAir GPS board (see SEN-6) could plausibly fill that role
+  later without a new purchase. Process lesson from this purchase:
+  verify NRND/EOL status before buying a specific SKU, not just
+  confirming the interface class.
+- **Breadboard wiring (2026-09-30):** wired one at a time, not
+  simultaneously — BNO055 active, ICM-20948 as a direct swap-in using
+  the same 4 points (SDA/SCL/VCC/GND). See
+  `docs/wiring/breadboard-wiring-layout.yaml`.
 - **Interface/owner (see D-6):** Pi-managed, I2C.
 - **Mounting needs:** TBD.
-- **Notes:** Optional/desired — useful for orientation but not required
-  if it meaningfully complicates the architecture or power budget.
+- **Still open for the permanent PCB:** exact SKU, given both on-hand
+  parts are NRND. Revisit before the real board respin — TDK's
+  suggested path above is the current leaning, not yet decided.
 
 ### SEN-6: GPS
 
 - **Supports:** CAP-2, CAP-3, CAP-11, CAP-4
-- **Candidates:** Not yet specified at the exact-SKU level, but the
-  interface class is settled: UART/NMEA-0183 (4-wire — near-zero pinout
-  risk). u-blox NEO-family (NEO-6M/7M/8M/M9N/M10) is the de facto hobby/
-  prosumer standard, consistent pinout across the family, heavily
-  documented. Exact SKU deferred — not a breadboard blocker. One
-  non-blocking wrinkle: if the still-undecided Pi↔ESP32 link also wants
-  UART and the chosen Pi model exposes only one hardware UART, GPS may
-  need a USB-to-serial adapter instead of header pins — a trivial,
-  common workaround.
+- **Interface class settled:** UART/NMEA-0183 (4-wire — near-zero
+  pinout risk). u-blox NEO-family (NEO-6M/7M/8M/M9N/M10) is the de facto
+  hobby/prosumer standard, consistent pinout across the family, heavily
+  documented.
+- **Confirmed long-term pick (2026-09-30): SparkFun NEO-M9N (SMA
+  variant).** Verified active/production, u-blox's own recommended
+  migration target away from the NRND NEO-M8N, open schematics, panel-
+  mount SMA for a separately-mounted antenna. Chosen on the merits for
+  long-term use, not optimized for breadboard (Qwiic) convenience. Also
+  on hand for bench eval: MicroAir M10G (has an embedded 18×18×4mm patch
+  antenna, no external antenna needed — a useful spare/fallback, bundled
+  QMC5883L magnetometer noted under SEN-5 as a possible future IMU
+  component).
+- **Gap: GPS-specific antenna not yet sourced.** The NEO-M9N SMA board
+  expects an external antenna (no onboard patch) — needs sourcing before
+  the breadboard can get a real fix, independent of the Q-6 antenna-mast
+  question (GPS/LoRa/ELRS each need their own distinct, correctly-tuned
+  antenna; they cannot share one — see Q-6 in 05).
 - **Interface/owner (see D-6):** Pi-managed, UART.
 - **Decimeter-accuracy target may be stricter than actually needed** —
   worth checking against `position_fusion.py`'s existing dead-reckoning
@@ -137,7 +160,9 @@ and [`../../../pathfinder/BOM.md`](../../../pathfinder/BOM.md).
 - **Mounting needs:** Antenna integration TBD (see Q-6 in 05).
 - **Notes:** Almost certainly mandatory. Update frequency can be
   moderate — rover is low-speed, so a few fixes per minute is likely
-  sufficient.
+  sufficient. HDOP-based accuracy heuristic (`accuracy_m = hdop * 5.0`)
+  is implemented in `hardware_sensor_hub.py`, documented there as an
+  approximation to refine once real bench fix data exists.
 
 ## Compute
 
@@ -234,22 +259,26 @@ remote kill switch.
 ### COM-5: Local status LCD
 
 - **Supports:** CAP-4 (telemetry), general bench/field validation.
-- **Candidates:** Not yet specified — user to inventory hobby-kit parts
-  on hand. Likely either a 16x2/20x4 character LCD with an I2C backpack
-  (PCF8574, addr 0x27/0x3F) or a small SSD1306 OLED (I2C, addr 0x3C) —
-  not a touch display, just status readout.
+- **Confirmed (2026-09-30): 1602A 16×2 character LCD with a PCF8574 I2C
+  backpack, address `0x27`** — matches `github.com/UCTRONICS/KB0005`'s
+  reference driver exactly. Two backpack-equipped units on hand (one
+  active, one spare), plus a third bare 1602A (no backpack) as spare.
+  Powered from the Pi's 5V pin. An "Inland 3.5 inch TFT Touch Screen
+  Monitor" and standard 7" Pi displays are also on hand as alternates,
+  not used for this role.
 - **Interface/owner (see D-6):** Pi-managed, I2C. No address conflict
   with anything decided so far (IMU 0x28/0x68-class, GPS I2C mode 0x42,
-  QMC5883L 0x0D) — shares the IMU's bus for free.
-- **Notes (2026-09-30):** Proposed to show key status indicators across
-  a few subscreens (LCD real estate is small) — e.g. GPS fix/heading,
-  mission state/alert, obstacle counts, drive status. Value beyond
-  convenience: lets a human directly compare on-device state against
-  what the same tick's telemetry record reports, a live cross-check on
-  the already-built telemetry pipeline. Subscreen content, navigation
-  (auto-rotate vs. a physical button), and refresh cadence are real
-  design choices — deferred to the breadboard design session, not
-  settled here.
+  QMC5883L 0x0D).
+- **Subscreen content and navigation, built (2026-10-01):** implemented
+  in `papaya_mission/status_display.py` — 4 screens (position/heading,
+  mission mode+alert, obstacle count+last type, drive throttle+halted
+  status), cycled via up/down buttons, with 2 soft-key function buttons
+  whose meaning depends on the current screen. Reads
+  `MissionRuntime.last_telemetry_readings`, the same state the
+  telemetry pipeline samples — a live cross-check on what the same
+  tick's record reports, as originally proposed. Real hardware write
+  backend (the actual PCF8574 byte-banged protocol) is bench-time work,
+  not yet built.
 
 ### COM-3: Cellular
 
