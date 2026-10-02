@@ -11,6 +11,19 @@ All notable changes to this project are documented here. Versioning follows
 - **PATCH** — fixes, tuning, and small additions (e.g. trim values, BOM
   entries, doc updates).
 
+## [2.2.1] - 2026-10-02
+
+### Fixed
+- `PositionFusion`'s fused heading only updated on ticks where no GPS fix
+  arrived — on a GPS-healthy rover (the normal case), heading never
+  advanced past its seed value, silently misplacing every obstacle the
+  mission logs (bearing is projected from this heading). Found during the
+  digital-twin simulator's final review (2026-09-26), fixed now: heading
+  updates unconditionally every tick via a new, guard-free
+  `PositionFusion.on_imu_heading()`, independent of GPS-fix dead-reckoning.
+  The related seed-time gap (the first position estimate defaulted to
+  heading `0.0` instead of the real IMU reading) is fixed too.
+
 ## [2.2.0] - 2026-10-02
 
 ### Added
