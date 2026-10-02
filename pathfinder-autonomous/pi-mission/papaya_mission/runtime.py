@@ -102,6 +102,12 @@ class MissionRuntime:
         # substitution and expected_metrics filtering apply only to that
         # persisted copy, never to this one.
         self.last_telemetry_readings: dict[str, Any] = {}
+        # Live, in-memory counters for the obstacles-screen LCD state. Reset
+        # per sweep session (handle_start_sweep) -- these report "this
+        # mission", not a lifetime total across a bench day of many short
+        # test sweeps.
+        self._obstacle_count: int = 0
+        self._last_obstacle_type: str = "-"
 
     def startup(self) -> None:
         self.rover = backend_client.fetch_rover(self.http_client, self.backend_base_url, self.rover_id)
@@ -216,6 +222,8 @@ class MissionRuntime:
             self._save_sweep_session()
 
     def handle_start_sweep(self, payload: dict[str, Any]) -> None:
+        self._obstacle_count = 0
+        self._last_obstacle_type = "-"  # matches _render_obstacles' own default
         geofence_id = payload["geofence_id"]
         inclusive = backend_client.fetch_geofence(self.http_client, self.backend_base_url, geofence_id)
         all_geofences = backend_client.list_geofences(self.http_client, self.backend_base_url)
@@ -573,6 +581,11 @@ class MissionRuntime:
         )
 
     def _save_obstacle(self, obstacle, *, obstacle_id: str | None = None) -> None:
+        # Counted regardless of whether a session exists to persist a row to
+        # below -- the rover reacted to this obstacle either way, which is
+        # what the live counter reports.
+        self._obstacle_count += 1
+        self._last_obstacle_type = obstacle.type
         if self.sweep_session is None:
             # MP-1's obstacle tracking is scoped to sweep sessions: the local
             # store's obstacles.sweep_session_id is NOT NULL, matching the
@@ -704,6 +717,8 @@ class MissionRuntime:
         # could not be read", not "there is no alert" -- an important
         # difference for a safety field.
         readings["mission_alert"] = self.mission_alert or "none"
+        readings["obstacle_count"] = self._obstacle_count
+        readings["last_obstacle_type"] = self._last_obstacle_type
 
         try:
             drive_status = self.esp32_link.read_drive_status()

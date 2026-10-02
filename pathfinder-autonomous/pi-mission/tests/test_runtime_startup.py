@@ -98,3 +98,19 @@ def test_start_sweep_excludes_exclusive_geofences_from_inclusive_list(tmp_path):
     runtime.handle_start_sweep({"geofence_id": "fence-1"})
 
     assert len(runtime.exclusion_polygons) == 1
+
+
+def test_start_sweep_resets_obstacle_count_and_last_type(tmp_path):
+    rover = {"_id": "rover-1", "name": "George", "turn_style": "spin_in_place"}
+    inclusive = {"_id": "fence-1", "type": "inclusive", "boundary": {"type": "Polygon", "coordinates": [FIELD_RING]}}
+    runtime = _make_runtime(tmp_path, rover, geofences=[inclusive])
+    runtime.startup()
+    runtime.handle_start_sweep({"geofence_id": "fence-1"})
+    # Simulate a prior session that had already detected some obstacles.
+    runtime._obstacle_count = 5
+    runtime._last_obstacle_type = "barrel"
+
+    runtime.handle_start_sweep({"geofence_id": "fence-1"})  # a fresh sweep starts
+
+    assert runtime._obstacle_count == 0
+    assert runtime._last_obstacle_type == "-"

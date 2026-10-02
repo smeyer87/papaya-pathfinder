@@ -587,3 +587,39 @@ def test_a_raising_esp32_status_read_leaves_halted_on_contact_out_of_the_sample(
 
     assert "halted_on_contact" not in runtime.last_telemetry_readings
     assert runtime.last_telemetry_readings["position"] == [-85.0, 38.05]  # rest of the sample is unaffected
+
+
+def test_obstacle_count_increments_on_a_bump_contact(tmp_path):
+    hub = SimulatedSensorHub(INITIAL_IMU)
+    runtime = _make_started_runtime(tmp_path, sensor_hub=hub)
+    hub.script_gps_fix(GpsFix(lat=38.05, lon=-85.0, accuracy_m=2.0, timestamp=0.0))
+    runtime.tick()  # seeds position_fusion
+    assert runtime._obstacle_count == 0
+
+    runtime.esp32_link.script_bump_events([BumpEvent(detected_at=datetime(2026, 9, 25, tzinfo=timezone.utc))])
+    runtime._last_telemetry_sample_monotonic = 0.0  # force a sample this tick
+    runtime.tick()
+
+    assert runtime._obstacle_count == 1
+    assert runtime._last_obstacle_type == "unknown"  # obstacle_from_bump_contact's type
+    assert runtime.last_telemetry_readings["obstacle_count"] == 1
+    assert runtime.last_telemetry_readings["last_obstacle_type"] == "unknown"
+
+
+def test_obstacle_count_increments_even_with_no_active_sweep_session(tmp_path):
+    """A bump contact with no sweep session active still makes
+    _save_obstacle return early WITHOUT writing a row (see its own
+    docstring/comments) -- the counter must still increment, since the
+    rover genuinely reacted to something. Only the durable row is skipped.
+    """
+    hub = SimulatedSensorHub(INITIAL_IMU)
+    runtime = _make_started_runtime(tmp_path, sensor_hub=hub)
+    hub.script_gps_fix(GpsFix(lat=38.05, lon=-85.0, accuracy_m=2.0, timestamp=0.0))
+    runtime.tick()
+    runtime.sweep_session = None  # simulate no active session
+
+    runtime.esp32_link.script_bump_events([BumpEvent(detected_at=datetime(2026, 9, 25, tzinfo=timezone.utc))])
+    runtime.tick()
+
+    assert runtime._obstacle_count == 1
+    assert local_store.list_unsynced_obstacles(runtime.conn) == []  # not persisted -- no session to attach to
