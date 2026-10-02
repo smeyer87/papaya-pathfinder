@@ -64,6 +64,35 @@ handling already in `MissionRuntime`. Reserve an LCD screen/function-key
 slot for this later; not built as part of the breadboard itself (no
 autonomous drive-command channel exists yet to override).
 
+## Command redelivery / OTA follow-ups (2026-10-02)
+
+From the final whole-branch review of
+`docs/superpowers/plans/2026-10-02-ota-safety-gating.md`:
+
+- **Backend command redelivery gap:** `poll_commands`
+  (`pathfinder-autonomous/backend/app/services/commands.py`) transitions a
+  command to `"delivered"` on poll, but nothing ever moves a `"delivered"`
+  command back to `"pending"` if it's never acked (no timeout, no
+  requeue). This affects EVERY command type the Pi polls (`start_sweep`,
+  `pause_sweep`, `ota_update`, etc.), not just OTA -- any command the Pi
+  fails to ack for any reason (a crash mid-handling, the OTA safety gate
+  refusing it, a malformed payload) is silently and permanently stranded,
+  not retried. Surfaced by the final review of
+  `docs/superpowers/plans/2026-10-02-ota-safety-gating.md`. Worth its own
+  follow-up plan (likely needs a `delivered_at` timestamp + a redelivery
+  timeout check in `poll_commands`).
+- **`HardwareEsp32Link.trigger_ota()`**
+  (`pathfinder-autonomous/pi-mission/papaya_mission/hardware_esp32_link.py`)
+  logs an error but still returns normally when the underlying
+  `flash_runner` reports failure -- so `_handle_command`'s caller acks the
+  OTA command as successfully completed even when the real `esptool`
+  flash actually failed. This was previously unreachable in production
+  (nothing called `trigger_ota` before this plan); this plan is what
+  first makes it reachable. Belongs in the ESP32 firmware plan's scope --
+  the fix needs `trigger_ota` to raise (or otherwise signal failure)
+  rather than silently logging and returning, so the caller doesn't ack a
+  failed flash as done.
+
 ## StatusDisplay follow-ups from the runtime-state-gap plan (2026-10-01)
 
 From the final whole-branch review of
