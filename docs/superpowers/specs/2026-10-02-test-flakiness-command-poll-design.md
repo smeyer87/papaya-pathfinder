@@ -20,6 +20,8 @@ In isolation, a single test runs in milliseconds — nowhere near the 1-second t
 
 Two other files that ARE about command polling already handle this path correctly and were never affected: `tests/test_runtime_sync_and_integration.py` and `tests/test_runtime_tick_commands.py`.
 
+**Clarification (added after final review):** of the six files above, only four were ever actually reachable by this bug via existing code paths at the time of this fix — `test_digital_twin_scenarios.py`, `test_hardware_drivers_integration.py`, `test_runtime_tick_sensing.py`, and `test_status_display_integration.py`, all of which had existing tests calling `tick()` after `startup()`. `test_runtime_startup.py` and `test_runtime_resume.py`'s existing fixture helpers never called `tick()` at all in their pre-fix form (only `startup()`/`handle_start_sweep()`), so those two were never actually observed failing — they were fixed defensively/future-proofed, since they construct a `MissionRuntime` against the same kind of fixture and could plausibly grow a `tick()` call later.
+
 ## Fix
 
 Add one branch to each of the six affected `_handler`/`_handler_for` functions, matching the exact pattern already used in `test_runtime_tick_commands.py`:
