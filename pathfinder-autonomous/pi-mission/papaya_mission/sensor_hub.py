@@ -1,9 +1,9 @@
 """GPS/IMU/ultrasonic/camera sensor interfaces Mission Runtime reads
-from each tick. Real hardware drivers are deferred to a future
-hardware-integration pass, same as every other Pi-mission plan treats
-sensor acquisition -- these Protocols are the contract a real driver
-will eventually implement; SimulatedSensorHub is the test double used
-until then.
+from each tick -- these Protocols are the contract any driver
+implements. `SimulatedSensorHub` here is the scripted-per-field test
+double; `digital_twin.py` derives a coherent set of readings from one
+shared simulated world instead; `hardware_sensor_hub.py` is the real
+breadboard-bench implementation over injected hardware I/O.
 """
 from __future__ import annotations
 

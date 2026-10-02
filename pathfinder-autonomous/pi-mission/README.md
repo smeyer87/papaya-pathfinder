@@ -1,24 +1,23 @@
 # Papaya Pathfinder — Pi Mission
 
-Pure geometry, obstacle-handling, and decision-logic layer for MP-1:
-GPS+IMU dead-reckoning position fusion with a growing error-circle,
-boustrophedon coverage-pattern generation, exclusion-zone intrusion
-checks, obstacle detection/classification, and the mission-flow
-decision logic (row spacing, sweep-session lifecycle, exclusion and
-GPS-loss responses) built on top of it. See
+The MP-1 ("Map/Detect/Explore") mission software: GPS+IMU dead-reckoning
+position fusion with a growing error-circle, boustrophedon
+coverage-pattern generation, exclusion-zone intrusion checks, obstacle
+detection/classification and resume-after-restart reconciliation, and
+`MissionRuntime` — the orchestrator that ties all of it into one running
+process (startup/resume, the tick loop, command handling, telemetry
+cadence, Home-return sync). See
 `../../docs/superpowers/specs/2026-09-24-mp1-map-detect-explore-design.md`
-for the design this implements.
+for the design this implements, and the "Mission Runtime" section below
+for how it actually runs.
 
-No hardware I/O here -- `GpsFix`/`ImuReading` are plain data a later
-sensor-driver layer will produce from real hardware; this package only
-does the math. No persistence either -- `SweepSession` is a plain
-in-memory state object the caller drives and persists themselves. The
-actual runtime loop (waypoint navigation driving, command-queue
-polling, telemetry writes, Home-return sync triggering) is deferred to
-a not-yet-written Mission Runtime plan. Two of its three dependencies
-are now done -- Position & Coverage Geometry and Obstacle Detection &
-Classification -- leaving only the Pi Telemetry + Sync and backend
-command-channel plans still to exist as code.
+`GpsFix`/`ImuReading` are plain data; a sensor-driver layer underneath
+`MissionRuntime` produces them from either real or simulated hardware
+(see "Sensing backends" below) — this package's own math modules
+(`position_fusion.py`, `coverage_pattern.py`, etc.) never touch hardware
+directly. Persistence is local-first: `local_store.py`'s SQLite store
+holds obstacles/sweep-sessions/telemetry, synced to the backend at a
+Home-return checkpoint by `sync_client.py`.
 
 **Time handling:** `position_fusion.py`'s `timestamp` fields are
 monotonic seconds (e.g. `time.monotonic()`), used only for computing
@@ -84,6 +83,50 @@ heading before placing the obstacle.
   backend's `/sync/*` endpoints at a Home-return checkpoint. Tests run
   against `httpx.MockTransport`, not a live server -- no MongoDB or
   running backend needed to build or test this module.
+- `runtime.py` — `MissionRuntime`: the orchestrator. Owns no business
+  logic of its own; ties position fusion, obstacle detection, the
+  mission-flow decision modules, telemetry, and sync into one running
+  process. Takes a `SensorHub` and an `Esp32Link` as constructor
+  arguments (see "Sensing backends" below).
+- `runtime_config.py` — named constants and `.env`-loaded settings
+  (`TICK_HZ`, poll/sample intervals, GPS-loss thresholds, etc.).
+- `esp32_link.py` / `sensor_hub.py` — the `Esp32Link`/`SensorHub`
+  Protocols `MissionRuntime` depends on, plus `FakeEsp32Link`/
+  `SimulatedSensorHub`, the scripted-per-field test doubles used by most
+  of this package's own tests.
+- `backend_client.py` — read/poll half of talking to the Backend Core
+  API (rover/geofence fetch, command polling); `sync_client.py` is the
+  push half.
+
+### Sensing backends
+
+Three things can sit behind the `SensorHub`/`Esp32Link` Protocols,
+swapped in via `MissionRuntime`'s constructor without touching
+orchestration logic:
+
+- **`sensor_hub.py`'s `SimulatedSensorHub` / `esp32_link.py`'s
+  `FakeEsp32Link`** — scripted per-field test doubles. Each test sets
+  exactly the value it needs; fields have no relationship to each other.
+- **`digital_twin.py`** — one coherent simulated rover world (position,
+  heading, speed, a bounded mast sweep, bounded GPS jitter, bump/halt
+  detection) that *derives* every sensor reading from shared state, so a
+  scenario test can rely on them agreeing with each other the way real
+  sensors would.
+- **`hardware_esp32_link.py` / `hardware_sensor_hub.py`** — real
+  implementations for the breadboard bench rig: NMEA GPS parsing, a
+  BNO055-shaped IMU, HC-SR04-style ultrasonic ranging, a thin camera
+  pass-through, and the real newline-delimited-JSON Pi↔ESP32 UART
+  protocol. Every hardware dependency (a serial-like transport, an I2C
+  device, a GPIO pulse timer) is injected via the constructor against a
+  `Protocol` defined in the same file, so none of this needs real
+  hardware or hardware-specific libraries (`pyserial`, `pigpio`, etc.)
+  to unit-test — only to actually run against physical hardware, which
+  is bench-time work (constructing the real `serial.Serial`/`pigpio.pi()`
+  objects) not yet wired into `__main__.py`.
+- **`status_display.py`** — an LCD status display (screen cycling, 2
+  soft-key function buttons) reading `MissionRuntime.last_telemetry_
+  readings`, the same hardware-driver pattern: logic is fully testable,
+  the real PCF8574/1602A write backend is bench-time work.
 
 ## Mission Runtime
 
@@ -91,23 +134,23 @@ heading before placing the obstacle.
 `ROVER_ID`, `BACKEND_BASE_URL` (the running Backend Core service), and
 `LOCAL_DB_PATH` (SQLite file path — created if absent).
 
-Currently wired to `SimulatedSensorHub` and a fake `Esp32Link` — real
-hardware drivers (GPS/IMU/ultrasonic/camera modules, the actual
-UART/I2C link to the ESP32) are a future hardware-integration pass, not
-part of this plan. `runtime.py`'s `MissionRuntime` takes both as
-constructor arguments specifically so real drivers can be swapped in
-later without touching orchestration logic.
+The CLI entrypoint (`__main__.py`) currently wires `SimulatedSensorHub`
+and `FakeEsp32Link` — real hardware drivers exist (`hardware_sensor_hub.py`,
+`hardware_esp32_link.py`, see "Sensing backends" above) but constructing
+the actual hardware objects they're injected with (a real serial port, a
+real `pigpio` connection) is bench-time work not yet done, so the CLI
+entrypoint hasn't been switched over.
 
-**Note — that swap-in story holds for sensing, not for motion.** The
+**Note — the swap-in story holds for sensing, not yet for motion.** The
 `Esp32Link` contract currently covers bump-safety reporting and
 drive-status telemetry only; it has no drive/steering-commanding method
 yet, and `MissionRuntime` never issues a movement command anywhere in
 `tick()`. Actual navigation (driving toward the next waypoint) is not
 yet implemented: this runtime can *detect* waypoint arrival and make
 mission-level decisions off it, but it has no way to *cause* that
-arrival. A future hardware-integration pass needs to add both a
-movement-commanding method to `Esp32Link` and a navigation step to
-`tick()` before the rover can physically move itself.
+arrival. The ESP32 firmware plan needs to add both a movement-commanding
+method to `Esp32Link` and a navigation step to `tick()` before the rover
+can physically move itself.
 
 Per-tick duration is logged; a warning means a tick exceeded its
 `TICK_HZ` budget — see the MP-1 Mission Runtime design notes' "Scaling
