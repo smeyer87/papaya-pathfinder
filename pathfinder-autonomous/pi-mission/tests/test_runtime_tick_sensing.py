@@ -623,3 +623,21 @@ def test_obstacle_count_increments_even_with_no_active_sweep_session(tmp_path):
 
     assert runtime._obstacle_count == 1
     assert local_store.list_unsynced_obstacles(runtime.conn) == []  # not persisted -- no session to attach to
+
+
+def test_live_only_fields_are_never_synced_to_the_telemetry_record(tmp_path):
+    """Locks in a deliberate scope decision: obstacle_count, last_obstacle_type,
+    and halted_on_contact are live/local-only (read via last_telemetry_readings),
+    never added to MP1_EXPECTED_METRICS or synced to the backend. Nothing else in
+    this suite would fail if that constraint quietly regressed later.
+    """
+    hub = SimulatedSensorHub(INITIAL_IMU)
+    runtime = _make_started_runtime(tmp_path, sensor_hub=hub)
+    hub.script_gps_fix(GpsFix(lat=38.05, lon=-85.0, accuracy_m=2.0, timestamp=0.0))
+    runtime._last_telemetry_sample_monotonic = 0.0  # force a sample this tick
+
+    runtime.tick()
+
+    metrics = local_store.list_unsynced_telemetry(runtime.conn)[-1]["metrics"]
+    for key in ("obstacle_count", "last_obstacle_type", "halted_on_contact"):
+        assert key not in metrics  # live-only; deliberately not synced
