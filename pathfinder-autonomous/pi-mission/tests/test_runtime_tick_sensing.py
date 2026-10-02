@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import httpx
 import pytest
 
-from papaya_mission.esp32_link import BumpEvent, FakeEsp32Link
+from papaya_mission.esp32_link import BumpEvent, FakeEsp32Link, Esp32Status
 from papaya_mission.position_fusion import GpsFix, ImuReading
 from papaya_mission.runtime import MissionRuntime
 from papaya_mission.sensor_hub import ObstacleDetection, SimulatedSensorHub
@@ -536,3 +536,54 @@ def test_resume_validation_reconciles_on_arrival_even_with_no_detection(tmp_path
     rows = local_store.list_obstacles_for_session(runtime.conn, "sess-1")
     assert [r["id"] for r in rows] == ["obs-pre-crash"]
     assert rows[0]["last_confirmed_at"] is None
+
+
+def test_last_telemetry_readings_starts_empty_before_any_sample(tmp_path):
+    hub = SimulatedSensorHub(INITIAL_IMU)
+    runtime = _make_started_runtime(tmp_path, sensor_hub=hub)
+
+    # startup() arms _last_telemetry_sample_monotonic to "now", so the very
+    # first tick's sample is not yet due -- nothing has been snapshotted yet.
+    assert runtime.last_telemetry_readings == {}
+
+
+def test_last_telemetry_readings_reflects_latest_sample(tmp_path):
+    hub = SimulatedSensorHub(INITIAL_IMU)
+    runtime = _make_started_runtime(tmp_path, sensor_hub=hub)
+    hub.script_gps_fix(GpsFix(lat=38.05, lon=-85.0, accuracy_m=2.0, timestamp=0.0))
+    runtime._last_telemetry_sample_monotonic = 0.0  # force a sample this tick
+
+    runtime.tick()
+
+    assert runtime.last_telemetry_readings["position"] == [-85.0, 38.05]
+    assert runtime.last_telemetry_readings["mission_alert"] == "none"
+    assert runtime.last_telemetry_readings["halted_on_contact"] is False  # FakeEsp32Link's default status
+
+
+def test_last_telemetry_readings_includes_halted_on_contact_when_true(tmp_path):
+    hub = SimulatedSensorHub(INITIAL_IMU)
+    runtime = _make_started_runtime(tmp_path, sensor_hub=hub)
+    hub.script_gps_fix(GpsFix(lat=38.05, lon=-85.0, accuracy_m=2.0, timestamp=0.0))
+    runtime.esp32_link.script_status(Esp32Status(halted_on_contact=True))
+    runtime._last_telemetry_sample_monotonic = 0.0
+
+    runtime.tick()
+
+    assert runtime.last_telemetry_readings["halted_on_contact"] is True
+
+
+def test_a_raising_esp32_status_read_leaves_halted_on_contact_out_of_the_sample(tmp_path):
+    hub = SimulatedSensorHub(INITIAL_IMU)
+    runtime = _make_started_runtime(tmp_path, sensor_hub=hub)
+    hub.script_gps_fix(GpsFix(lat=38.05, lon=-85.0, accuracy_m=2.0, timestamp=0.0))
+
+    def _boom():
+        raise RuntimeError("esp32 link dropped")
+
+    runtime.esp32_link.status = _boom
+    runtime._last_telemetry_sample_monotonic = 0.0
+
+    runtime.tick()  # must not raise
+
+    assert "halted_on_contact" not in runtime.last_telemetry_readings
+    assert runtime.last_telemetry_readings["position"] == [-85.0, 38.05]  # rest of the sample is unaffected

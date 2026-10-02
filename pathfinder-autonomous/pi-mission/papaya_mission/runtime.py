@@ -95,6 +95,13 @@ class MissionRuntime:
         # _resume_in_progress_session_if_any (Task 6) for why.
         self._resume_validation_known_rows: list[dict[str, Any]] = []
         self.mission_alert: str | None = None
+        # Live, pre-sentinel snapshot of the latest telemetry sample, for any
+        # in-process consumer (e.g. StatusDisplay) that needs current state
+        # right now rather than through the persisted/synced copy -- see
+        # _sample_telemetry_if_due. build_telemetry_record's "missing"
+        # substitution and expected_metrics filtering apply only to that
+        # persisted copy, never to this one.
+        self.last_telemetry_readings: dict[str, Any] = {}
 
     def startup(self) -> None:
         self.rover = backend_client.fetch_rover(self.http_client, self.backend_base_url, self.rover_id)
@@ -712,6 +719,27 @@ class MissionRuntime:
             readings["throttle_position"] = drive_status.throttle_position
             for servo_id, angle_deg in drive_status.servo_positions_deg.items():
                 readings[f"servo_{servo_id}_deg"] = angle_deg
+
+        try:
+            halted_on_contact = self.esp32_link.status().halted_on_contact
+        except Exception:
+            # Same rationale as the read_drive_status handling above: leave
+            # this one field out of the sample rather than assert a
+            # not-halted state we were not actually able to confirm.
+            logger.warning(
+                "ESP32 status read failed -- leaving halted_on_contact out of this sample",
+                exc_info=True,
+            )
+            halted_on_contact = None
+        if halted_on_contact is not None:
+            readings["halted_on_contact"] = halted_on_contact
+
+        # Snapshot the fully-assembled, pre-sentinel readings for any live
+        # consumer. Deliberately the SAME dict object build_telemetry_record
+        # reads below, not a copy -- any keys Task 2 adds earlier in this
+        # method are already present in it by this point.
+        self.last_telemetry_readings = readings
+
         # Per-servo keys are dynamic (`servo_{id}_deg`, from whatever ids the
         # ESP32 reported THIS tick), so they cannot be pre-enumerated in the
         # static MP1_EXPECTED_METRICS -- and build_telemetry_record drops any
