@@ -77,14 +77,16 @@ From the final whole-branch review of
   shows "Throttle: ?" instead of a false "Throttle: 0.00". See
   `docs/superpowers/plans/2026-10-01-drive-screen-halted-ambiguity.md` for
   the fix plan and tests.
-- **A resumed (not fresh) sweep session restarts `obstacle_count` at 0**
-  instead of seeding it from the obstacles already persisted for that
-  session. `handle_start_sweep` resets the counter; `_resume_in_progress_
-  session_if_any` doesn't set it. The counter's own spec says it reports
-  "this mission," and a resumed session is the same mission — a one-liner
-  at the resume-arming site (count `local_store.list_obstacles_for_
-  session(...)` for that session) would fix it, but neither the spec nor
-  plan called for it, so it's an open design question, not a bug.
+- **FIXED (2026-10-02):** A resumed (not fresh) sweep session restarted
+  `obstacle_count` at 0 instead of seeding it from the obstacles already
+  persisted for that session. `_resume_in_progress_session_if_any` now
+  seeds `_obstacle_count`/`_last_obstacle_type` from
+  `local_store.list_obstacles_for_session(...)` for that session, and
+  `_save_obstacle` only increments the count for a genuinely new detection
+  (no existing `obstacle_id`) so a confirmed re-detection during the resume
+  pass no longer double-counts against that seeded baseline. See
+  `docs/superpowers/plans/2026-10-02-resumed-session-obstacle-count.md` for
+  the fix plan and tests.
 - **The position screen's `f"{lat:.5f},{lon:.5f}"` can exceed the LCD's
   16-char width and silently truncates** (e.g. `"38.05000,-85.000"` —
   longitude's last digit(s) cut off). Pre-existing `status_display.py`
