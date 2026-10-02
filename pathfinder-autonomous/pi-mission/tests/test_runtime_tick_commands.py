@@ -384,7 +384,11 @@ def test_ota_update_is_refused_while_sweep_session_in_progress(tmp_path):
     runtime.tick()  # must not raise out of the tick itself
 
     assert runtime.esp32_link.ota_triggers == []  # never actually triggered
-    assert acked == []  # never acked, so the backend redelivers it next poll
+    # Never acked -- note this does NOT mean the backend redelivers it; a
+    # "delivered" command never moves back to "pending" (see runtime.py's
+    # _handle_ota_update comment), so this command is actually dropped and
+    # must be manually re-issued once the mission ends.
+    assert acked == []
 
 
 def test_ota_update_proceeds_with_no_sweep_session(tmp_path):
