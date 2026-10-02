@@ -174,6 +174,23 @@ class MissionRuntime:
             completed_at=session_dict["completed_at"],
         )
 
+        # The LCD's obstacle counter reports "this mission" -- a resumed
+        # session is the same mission, so it must be seeded from whatever
+        # was already persisted, not restarted at 0 just because the
+        # process did. last_confirmed_at falls back to first_detected_at
+        # per-obstacle (not only when every row lacks one): a never-
+        # re-detected obstacle has last_confirmed_at=None (see Obstacle's
+        # default and obstacle_detection.py's factories, neither of which
+        # sets it), and max() over a mix of None and real datetimes raises
+        # TypeError.
+        resumed_obstacles = local_store.list_obstacles_for_session(self.conn, self.sweep_session.id)
+        self._obstacle_count = len(resumed_obstacles)
+        self._last_obstacle_type = (
+            max(resumed_obstacles, key=lambda o: o["last_confirmed_at"] or o["first_detected_at"])["type"]
+            if resumed_obstacles
+            else "-"
+        )
+
         all_geofences = backend_client.list_geofences(self.http_client, self.backend_base_url)
         self.exclusion_polygons = [
             shape(g["boundary"]) for g in all_geofences if g["type"] == "exclusive"
@@ -213,9 +230,7 @@ class MissionRuntime:
             # (ids are a persistence concern owned by local_store), so the row
             # is the only place an existing obstacle's id lives -- and a
             # confirmed re-detection has to be saved back under that id.
-            self._resume_validation_known_rows = local_store.list_obstacles_for_session(
-                self.conn, self.sweep_session.id
-            )
+            self._resume_validation_known_rows = resumed_obstacles
 
         if self.sweep_session.status == SweepSessionStatus.INTERRUPTED:
             self.sweep_session.resume()

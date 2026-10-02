@@ -103,6 +103,10 @@ def test_startup_auto_resumes_interrupted_session(tmp_path):
     # The known-obstacle set is snapshotted at arm time, so it holds exactly
     # the pre-crash rows -- nothing this resume pass goes on to detect.
     assert [row["id"] for row in runtime._resume_validation_known_rows] == ["obs-pre-crash"]
+    # The LCD's obstacle counter must reflect this session's history too,
+    # not just what happens after this particular process restart.
+    assert runtime._obstacle_count == 1
+    assert runtime._last_obstacle_type == "barrel"
 
 
 def _interrupted_session(session_id: str, started_at: datetime) -> dict:
@@ -145,6 +149,7 @@ def test_startup_resumes_the_newest_of_several_resumable_sessions(tmp_path):
 
     assert runtime.sweep_session is not None
     assert runtime.sweep_session.id == "sess-new"
+    assert runtime._obstacle_count == 0  # no obstacle rows persisted for this session
 
 
 def test_startup_warns_about_the_resumable_sessions_it_skips(tmp_path):
@@ -218,3 +223,59 @@ def test_startup_does_not_resume_a_completed_but_unsynced_session(tmp_path):
     runtime.startup()
 
     assert runtime.sweep_session is None
+
+
+def test_resume_seeds_last_obstacle_type_using_confirmed_time_when_available(tmp_path):
+    """Regression test: a session can have a mix of never-re-detected
+    obstacles (last_confirmed_at=None) and re-confirmed ones
+    (last_confirmed_at set). Ordering by last_confirmed_at alone would
+    raise TypeError comparing None to a real datetime -- the fallback to
+    first_detected_at must apply per-obstacle, not just when ALL rows
+    lack a confirmation time.
+    """
+    rover = {"_id": "rover-1", "name": "George"}
+    inclusive = {"_id": "fence-1", "type": "inclusive", "boundary": {"type": "Polygon", "coordinates": [FIELD_RING]}}
+    runtime, _ = _make_runtime(tmp_path, rover, geofences=[inclusive])
+    local_store.save_sweep_session(
+        runtime.conn, _interrupted_session("sess-1", datetime(2026, 9, 25, 10, 0, tzinfo=timezone.utc))
+    )
+    local_store.save_obstacle(
+        runtime.conn,
+        {
+            "id": "obs-first",
+            "sweep_session_id": "sess-1",
+            "position": (-85.0, 38.0),
+            "position_uncertainty_m": 1.5,
+            "type": "barrel",
+            "classification_confidence": 0.9,
+            "detection_method": "ultrasonic+camera",
+            "status": "permanent-pending",
+            "first_detected_at": datetime(2026, 9, 25, 10, 1, 0, tzinfo=timezone.utc),
+            "last_confirmed_at": None,  # never re-detected
+        },
+    )
+    local_store.save_obstacle(
+        runtime.conn,
+        {
+            "id": "obs-reconfirmed",
+            "sweep_session_id": "sess-1",
+            "position": (-85.0, 38.005),
+            "position_uncertainty_m": 1.5,
+            "type": "cone",
+            "classification_confidence": 0.85,
+            "detection_method": "ultrasonic+camera",
+            "status": "permanent-pending",
+            "first_detected_at": datetime(2026, 9, 25, 10, 0, 30, tzinfo=timezone.utc),
+            "last_confirmed_at": datetime(2026, 9, 25, 10, 3, 0, tzinfo=timezone.utc),  # re-detected later
+        },
+    )
+    local_store.commit(runtime.conn)
+
+    runtime.startup()  # must not raise
+
+    assert runtime._obstacle_count == 2
+    # obs-reconfirmed's last_confirmed_at (10:03:00) is the most recent
+    # obstacle-related event of the two -- its type wins, even though
+    # obs-first's first_detected_at (10:01:00) is more recent than
+    # obs-reconfirmed's OWN first_detected_at (10:00:30).
+    assert runtime._last_obstacle_type == "cone"
