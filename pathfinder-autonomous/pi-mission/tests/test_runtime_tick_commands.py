@@ -372,3 +372,48 @@ def test_ack_failure_does_not_prevent_command_effect_or_raise(tmp_path):
     runtime.tick()  # handles pause_sweep locally, then ack_command 500s -- must not raise
 
     assert runtime.sweep_session.status == SweepSessionStatus.INTERRUPTED
+
+
+def test_ota_update_is_refused_while_sweep_session_in_progress(tmp_path):
+    commands = [{"_id": "cmd-1", "type": "ota_update", "payload": {"firmware_path": "/firmware/v2.bin"}}]
+    acked = []
+    runtime = _make_started_runtime(tmp_path, commands, acked)
+    assert runtime.sweep_session.status == SweepSessionStatus.IN_PROGRESS
+    runtime._last_command_poll_monotonic = 0.0  # force a poll this tick
+
+    runtime.tick()  # must not raise out of the tick itself
+
+    assert runtime.esp32_link.ota_triggers == []  # never actually triggered
+    assert acked == []  # never acked, so the backend redelivers it next poll
+
+
+def test_ota_update_proceeds_with_no_sweep_session(tmp_path):
+    commands = [{"_id": "cmd-1", "type": "ota_update", "payload": {"firmware_path": "/firmware/v2.bin"}}]
+    acked = []
+    runtime = _make_idle_runtime(tmp_path, commands, acked)
+    assert runtime.sweep_session is None
+    runtime._last_command_poll_monotonic = 0.0
+
+    runtime.tick()
+
+    assert runtime.esp32_link.ota_triggers == ["/firmware/v2.bin"]
+    assert acked == ["/commands/cmd-1/ack"]
+
+
+def test_ota_update_proceeds_when_sweep_session_is_interrupted_not_in_progress(tmp_path):
+    """Regression test for the exact correctness gap this plan's design
+    found: sweep_session is never reset to None after a pause/stop, so
+    gating on mere presence (rather than .status == IN_PROGRESS) would
+    block OTA forever after the very first mission ever run.
+    """
+    commands = [{"_id": "cmd-1", "type": "ota_update", "payload": {"firmware_path": "/firmware/v2.bin"}}]
+    acked = []
+    runtime = _make_started_runtime(tmp_path, commands, acked)
+    runtime.sweep_session.interrupt(datetime.now(timezone.utc))
+    assert runtime.sweep_session.status == SweepSessionStatus.INTERRUPTED
+    runtime._last_command_poll_monotonic = 0.0
+
+    runtime.tick()
+
+    assert runtime.esp32_link.ota_triggers == ["/firmware/v2.bin"]
+    assert acked == ["/commands/cmd-1/ack"]

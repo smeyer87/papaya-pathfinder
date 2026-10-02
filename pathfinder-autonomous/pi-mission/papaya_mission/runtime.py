@@ -865,6 +865,8 @@ class MissionRuntime:
             self.exclusion_polygons = [
                 shape(g["boundary"]) for g in all_geofences if g["type"] == "exclusive"
             ]
+        elif command_type == "ota_update":
+            self._handle_ota_update(command.get("payload", {}))
         else:
             # An unknown type is still acked (the caller acks on return), so
             # the backend stops redelivering it -- but it must be visible in
@@ -875,6 +877,25 @@ class MissionRuntime:
                 "received unhandled command type %r (command %r)",
                 command_type, command.get("_id"),
             )
+
+    def _handle_ota_update(self, payload: dict[str, Any]) -> None:
+        # sweep_session is never reset to None anywhere in this class --
+        # pausing/stopping/completing a sweep only changes its .status.
+        # Checking mere presence here would block OTA forever after the
+        # very first mission this rover ever runs; checking IN_PROGRESS
+        # specifically (same idiom as the stop_sweep/abort_home branch
+        # above) is the correct "a mission is actually underway" check.
+        if self.sweep_session is not None and self.sweep_session.status == SweepSessionStatus.IN_PROGRESS:
+            # Raising (rather than silently returning) means the caller in
+            # _poll_and_handle_commands_if_due never acks this command, so
+            # the backend redelivers it next poll -- the OTA retries
+            # automatically once the mission pauses or ends, with no new
+            # ack/nack protocol needed.
+            raise RuntimeError(
+                "refusing OTA update while a sweep session is in progress -- "
+                "will retry automatically once the mission pauses/ends"
+            )
+        self.esp32_link.trigger_ota(payload["firmware_path"])
 
     def _home_return_sync(self) -> None:
         try:
