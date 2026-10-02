@@ -179,3 +179,35 @@ def test_imu_reading_rejects_heading_out_of_range():
 def test_gps_fix_rejects_negative_accuracy():
     with pytest.raises(ValueError):
         GpsFix(lat=38.0, lon=-85.0, accuracy_m=-1.0, timestamp=0.0)
+
+
+def test_on_imu_heading_updates_heading_only():
+    fix = GpsFix(lat=38.0, lon=-85.0, accuracy_m=2.0, timestamp=0.0)
+    fusion = PositionFusion(fix, initial_heading_deg=45.0)
+    before = fusion.current_estimate
+
+    fusion.on_imu_heading(270.0)
+
+    after = fusion.current_estimate
+    assert after.heading_deg == 270.0
+    assert after.lat == before.lat
+    assert after.lon == before.lon
+    assert after.error_radius_m == before.error_radius_m
+    assert after.timestamp == before.timestamp
+
+
+def test_on_imu_heading_works_independent_of_gps_fix_order():
+    fix = GpsFix(lat=38.0, lon=-85.0, accuracy_m=2.0, timestamp=0.0)
+    fusion = PositionFusion(fix, initial_heading_deg=45.0)
+
+    corrected = fusion.on_gps_fix(
+        GpsFix(lat=38.001, lon=-85.001, accuracy_m=1.5, timestamp=1.0)
+    )
+    assert corrected.heading_deg == 45.0  # unchanged by the GPS fix itself
+
+    fusion.on_imu_heading(180.0)
+
+    after = fusion.current_estimate
+    assert after.heading_deg == 180.0
+    assert after.lat == 38.001  # GPS-fixed position untouched by the heading update
+    assert after.lon == -85.001

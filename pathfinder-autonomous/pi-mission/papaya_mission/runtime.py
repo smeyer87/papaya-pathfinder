@@ -342,7 +342,7 @@ class MissionRuntime:
 
         if self.position_fusion is None:
             seed_fix = gps_fix or GpsFix(lat=0.0, lon=0.0, accuracy_m=999.0, timestamp=imu_reading.timestamp)
-            self.position_fusion = PositionFusion(seed_fix)
+            self.position_fusion = PositionFusion(seed_fix, initial_heading_deg=imu_reading.heading_deg)
             # The clock starts here whether or not a REAL fix arrived. When it
             # did not, we are seeding from the dummy (0,0)/999m fix, and
             # leaving _last_gps_fix_monotonic as None made _check_gps_loss
@@ -353,6 +353,15 @@ class MissionRuntime:
             # grace-period clock rather than disabling the check.
             self._last_gps_fix_monotonic = now_monotonic
             return
+
+        # Heading comes from the IMU compass every tick, regardless of GPS
+        # fix availability -- unlike position/error-radius/velocity, which
+        # only dead-reckon in on_imu_reading() below when no fix arrived.
+        # Calling this unconditionally is what fixes the bug where heading
+        # never advanced past its seed value on a GPS-healthy rover (a fix
+        # arriving most ticks meant on_imu_reading, the only method that
+        # used to update heading, almost never ran).
+        self.position_fusion.on_imu_heading(imu_reading.heading_deg)
 
         if gps_fix is not None:
             self.position_fusion.on_gps_fix(gps_fix)

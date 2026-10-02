@@ -662,3 +662,41 @@ def test_command_poll_does_not_crash_when_due(tmp_path):
     runtime._last_command_poll_monotonic = 0.0  # force a poll this tick
 
     runtime.tick()  # must not raise
+
+
+def test_heading_updates_every_tick_even_when_gps_is_healthy(tmp_path):
+    """Regression test for the bug: PositionFusion._heading_deg only
+    updated when no GPS fix arrived that tick, so on a GPS-healthy rover
+    (a fix arriving almost every tick) it never advanced past its seed
+    value. Scripts a GPS fix on every tick (the previously-broken case)
+    and confirms heading still tracks the scripted IMU reading.
+    """
+    hub = SimulatedSensorHub(INITIAL_IMU)
+    runtime = _make_started_runtime(tmp_path, sensor_hub=hub)
+    hub.script_gps_fix(GpsFix(lat=38.05, lon=-85.0, accuracy_m=2.0, timestamp=0.0))
+    runtime.tick()  # seeds position_fusion
+    assert runtime.position_fusion.current_estimate.heading_deg == 0.0  # INITIAL_IMU's heading
+
+    hub.script_imu_reading(
+        ImuReading(heading_deg=123.0, forward_acceleration_mps2=0.0, timestamp=1.0)
+    )
+    hub.script_gps_fix(GpsFix(lat=38.05, lon=-85.0, accuracy_m=2.0, timestamp=1.0))  # fix again this tick
+    runtime.tick()
+
+    assert runtime.position_fusion.current_estimate.heading_deg == 123.0
+
+
+def test_seed_tick_captures_the_real_imu_heading_not_zero(tmp_path):
+    """Regression test for the related seed-time gap: the very first
+    PositionFusion defaulted initial_heading_deg to 0.0 even though a
+    real IMU reading was already read that same tick.
+    """
+    hub = SimulatedSensorHub(
+        ImuReading(heading_deg=200.0, forward_acceleration_mps2=0.0, timestamp=0.0)
+    )
+    runtime = _make_started_runtime(tmp_path, sensor_hub=hub)
+    hub.script_gps_fix(GpsFix(lat=38.05, lon=-85.0, accuracy_m=2.0, timestamp=0.0))
+
+    runtime.tick()  # this tick seeds position_fusion
+
+    assert runtime.position_fusion.current_estimate.heading_deg == 200.0

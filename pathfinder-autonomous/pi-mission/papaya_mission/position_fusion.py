@@ -113,6 +113,18 @@ class PositionFusion:
         self._last_timestamp = fix.timestamp
         return self.current_estimate
 
+    def on_imu_heading(self, heading_deg: float) -> None:
+        """Updates heading only, independent of position dead-reckoning.
+        Unlike on_imu_reading, this has no dt guard -- it is called
+        unconditionally every tick regardless of whether a fresh GPS fix
+        is also available that tick, since heading comes from the IMU
+        compass and has nothing to do with GPS availability (unlike
+        position/error-radius/velocity, which follow the GPS-fix-resets /
+        IMU-dead-reckons-between-fixes pattern in on_gps_fix/
+        on_imu_reading).
+        """
+        self._heading_deg = heading_deg
+
     def on_imu_reading(self, reading: ImuReading) -> PositionEstimate:
         dt = reading.timestamp - self._last_timestamp
         if dt <= 0:
