@@ -143,6 +143,8 @@ Then add the new method. Place it immediately after `_handle_command` (find `_ha
         self.esp32_link.trigger_ota(payload["firmware_path"])
 ```
 
+**Correction (final review, 2026-10-02):** The comment above (and this plan's Goal/Architecture framing) claiming the backend "redelivers" an unacked `ota_update` command is false. `pathfinder-autonomous/backend/app/services/commands.py`'s `poll_commands` transitions a command to `"delivered"` on poll, and nothing ever moves a `"delivered"` command back to `"pending"` -- confirmed by the existing backend test `test_poll_does_not_redeliver_already_delivered_commands`. So a refused OTA command is actually dropped permanently, not retried automatically; the operator must notice the refusal (now a dedicated `logger.warning` naming exactly what happened) and manually re-issue the OTA once the mission has ended. The safety-gating behavior itself is unaffected and correct. See `docs/phase2/inputs/00-inbox.md`'s "Command redelivery / OTA follow-ups" section for the backend-wide follow-up.
+
 - [ ] **Step 4: Run the tests and verify they pass**
 
 Run: `pytest tests/test_runtime_tick_commands.py -v`
