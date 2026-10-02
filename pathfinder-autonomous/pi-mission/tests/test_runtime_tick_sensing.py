@@ -686,6 +686,42 @@ def test_heading_updates_every_tick_even_when_gps_is_healthy(tmp_path):
     assert runtime.position_fusion.current_estimate.heading_deg == 123.0
 
 
+def test_obstacle_bearing_uses_fresh_heading_not_a_stale_seed(tmp_path):
+    """End-to-end regression test for the real-world symptom: before the
+    heading-staleness fix, a GPS-healthy rover's obstacle_detection.py
+    would project every detection's bearing using the stale seed heading
+    (0.0, i.e. due north) instead of the rover's real, current heading --
+    silently misplacing every logged obstacle.
+    """
+    hub = SimulatedSensorHub(INITIAL_IMU)
+    runtime = _make_started_runtime(tmp_path, sensor_hub=hub)
+    hub.script_gps_fix(GpsFix(lat=38.05, lon=-85.0, accuracy_m=2.0, timestamp=0.0))
+    runtime.tick()  # seeds position_fusion
+
+    # Rover is now facing due east (90 degrees), confirmed via GPS every tick.
+    hub.script_imu_reading(
+        ImuReading(heading_deg=90.0, forward_acceleration_mps2=0.0, timestamp=1.0)
+    )
+    hub.script_gps_fix(GpsFix(lat=38.05, lon=-85.0, accuracy_m=2.0, timestamp=1.0))
+    runtime.tick()  # heading should now be 90.0 -- confirm this first
+
+    assert runtime.position_fusion.current_estimate.heading_deg == 90.0
+
+    # A detection straight ahead (relative_bearing_deg=0.0) should project
+    # EAST of the rover (increasing longitude), not north (increasing
+    # latitude) -- which is what the stale-heading bug would have produced.
+    hub.script_gps_fix(GpsFix(lat=38.05, lon=-85.0, accuracy_m=2.0, timestamp=2.0))
+    hub.script_ultrasonic(ObstacleDetection(relative_bearing_deg=0.0, range_m=2.0))
+    hub.script_camera(("barrel", 0.9))
+    runtime.tick()
+
+    saved = local_store.list_unsynced_obstacles(runtime.conn)
+    assert len(saved) == 1
+    obstacle_lon, obstacle_lat = saved[0]["position"]
+    assert obstacle_lon > -85.0  # east of the rover
+    assert abs(obstacle_lat - 38.05) < 1e-6  # not north -- stayed at the same latitude
+
+
 def test_seed_tick_captures_the_real_imu_heading_not_zero(tmp_path):
     """Regression test for the related seed-time gap: the very first
     PositionFusion defaulted initial_heading_deg to 0.0 even though a

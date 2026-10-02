@@ -211,3 +211,25 @@ def test_on_imu_heading_works_independent_of_gps_fix_order():
     assert after.heading_deg == 180.0
     assert after.lat == 38.001  # GPS-fixed position untouched by the heading update
     assert after.lon == -85.001
+
+
+def test_on_imu_heading_is_not_blocked_by_a_non_advancing_timestamp():
+    """Pins the design rationale: on_imu_heading has no dt guard, unlike
+    on_imu_reading, whose dt<=0 check could otherwise skip a heading
+    update on a tick whose IMU timestamp doesn't advance.
+    """
+    fix = GpsFix(lat=38.0, lon=-85.0, accuracy_m=2.0, timestamp=5.0)
+    fusion = PositionFusion(fix)
+
+    fusion.on_imu_heading(90.0)
+    # A reading whose timestamp does NOT advance past _last_timestamp --
+    # on_imu_reading's dt<=0 guard would reject this and leave position
+    # unchanged, but heading must already be set regardless.
+    estimate = fusion.on_imu_reading(
+        ImuReading(heading_deg=180.0, forward_acceleration_mps2=5.0, timestamp=5.0)
+    )
+
+    # on_imu_reading's own dt guard rejected this call (dt=0), so heading
+    # stays at what on_imu_heading set -- proving on_imu_heading's update
+    # was real and didn't depend on a dt check to take effect.
+    assert estimate.heading_deg == 90.0
