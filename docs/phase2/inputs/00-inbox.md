@@ -119,3 +119,21 @@ From the final whole-branch review of
   mid-test). Pre-existing, unrelated to any specific plan; worth a
   dedicated look (e.g. injecting a fake clock into the affected runtime
   checks) at some point.
+- **`HardwareImuSource.read()` (in `hardware_sensor_hub.py`) returns a
+  confident-looking but potentially dishonest heading during IMU
+  cold-boot.** Per `sensor_hub.py`'s own docstring ("a driver that cannot
+  read SHOULD return its last known reading"), `read()` correctly falls
+  back to `self._last_reading` whenever the real BNO055 reports
+  `(None, None, None)` (not yet calibrated). But `_last_reading` is seeded
+  at construction with `heading_deg=0.0`, so a rover whose IMU hasn't
+  finished calibrating at boot reports a confident heading of 0.0 (due
+  north) rather than an honest "unknown" — indistinguishable from a
+  genuinely north-facing rover, and every obstacle logged during that
+  warm-up window gets misplaced by the true heading error. Surfaced by the
+  final review of
+  `docs/superpowers/plans/2026-10-02-position-fusion-heading-staleness.md`
+  (now that the Pi-side math is correct, this is the one remaining path by
+  which a stale heading reaches obstacle placement in production). Fix
+  direction: expose reading age/validity from `HardwareImuSource`, or
+  refuse to emit a reading before the BNO055 reports calibration —
+  bench-time work, not fixable from pure software here.
