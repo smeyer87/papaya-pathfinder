@@ -75,8 +75,8 @@ From the final whole-branch review of
   key absence explicitly for both fields: `halted_on_contact` absent shows
   "LINK?" instead of a false "running", and `throttle_position` absent
   shows "Throttle: ?" instead of a false "Throttle: 0.00". See
-  `docs/superpowers/sdd/2026-10-01-drive-screen-halted-ambiguity/` for the
-  fix plan and tests.
+  `docs/superpowers/plans/2026-10-01-drive-screen-halted-ambiguity.md` for
+  the fix plan and tests.
 - **A resumed (not fresh) sweep session restarts `obstacle_count` at 0**
   instead of seeding it from the obstacles already persisted for that
   session. `handle_start_sweep` resets the counter; `_resume_in_progress_
