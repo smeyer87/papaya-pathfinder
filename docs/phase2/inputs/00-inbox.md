@@ -87,12 +87,13 @@ From the final whole-branch review of
   pass no longer double-counts against that seeded baseline. See
   `docs/superpowers/plans/2026-10-02-resumed-session-obstacle-count.md` for
   the fix plan and tests.
-- **The position screen's `f"{lat:.5f},{lon:.5f}"` can exceed the LCD's
-  16-char width and silently truncates** (e.g. `"38.05000,-85.000"` —
-  longitude's last digit(s) cut off). Pre-existing `status_display.py`
-  formatting, unrelated to any particular plan — first made visible by
-  the runtime-state-gap plan's own integration test. Worth re-checking
-  once real GPS fixes (not test coordinates) are in hand at the bench.
+- **FIXED (2026-10-02):** The position screen's `f"{lat:.5f},{lon:.5f}"`
+  could exceed the LCD's 16-char width and silently truncate (e.g.
+  `"38.05000,-85.000"` — longitude's last digit(s) cut off).
+  `_render_position` now formats to 4 decimal places instead of 5, which
+  fits exactly 16 characters for this rover's realistic coordinate range.
+  See `docs/superpowers/plans/2026-10-02-position-screen-truncation.md`
+  for the fix plan and tests.
 - **Syncing `obstacle_count`/`last_obstacle_type`/`halted_on_contact` to
   ground control** was explicitly deferred during that plan's
   brainstorming (kept local/live-only, read via
