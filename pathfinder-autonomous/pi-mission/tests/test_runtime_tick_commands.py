@@ -45,6 +45,7 @@ def _make_started_runtime(tmp_path, commands, acked) -> MissionRuntime:
     runtime.startup()
     runtime.handle_start_sweep({"geofence_id": "fence-1"})
     hub.script_gps_fix(GpsFix(lat=38.05, lon=-85.0, accuracy_m=2.0, timestamp=0.0))
+    runtime._last_telemetry_sample_monotonic = float("inf")  # no telemetry sample on the seed tick
     runtime.tick()  # seed position_fusion
     return runtime
 
@@ -65,6 +66,7 @@ def _make_idle_runtime(tmp_path, commands, acked) -> MissionRuntime:
     runtime.startup()
     hub.script_gps_fix(GpsFix(lat=38.05, lon=-85.0, accuracy_m=2.0, timestamp=0.0))
     runtime._last_command_poll_monotonic = float("inf")  # seed position without polling
+    runtime._last_telemetry_sample_monotonic = float("inf")  # no telemetry sample on the seed tick
     runtime.tick()
     return runtime
 
