@@ -79,3 +79,38 @@ def test_status_display_renders_real_runtime_state_without_raising(tmp_path):
 
     _drive_line1, drive_line2 = lcd.writes[3]
     assert drive_line2 == "HALTED"
+
+
+def test_status_display_shows_link_unknown_when_esp32_status_read_fails(tmp_path):
+    rover = {"_id": "rover-1", "name": "George", "length_m": 0.6, "turn_style": "spin_in_place"}
+    inclusive = {"_id": "fence-1", "type": "inclusive", "boundary": {"type": "Polygon", "coordinates": [FIELD_RING]}}
+    client = httpx.Client(transport=httpx.MockTransport(_handler(rover, [inclusive])))
+    hub = SimulatedSensorHub(INITIAL_IMU)
+    esp32 = FakeEsp32Link()
+    runtime = MissionRuntime(
+        rover_id="rover-1",
+        backend_base_url="http://backend.local",
+        local_db_path=str(tmp_path / "test.db"),
+        sensor_hub=hub,
+        esp32_link=esp32,
+        http_client=client,
+    )
+    runtime.startup()
+    runtime.handle_start_sweep({"geofence_id": "fence-1"})
+    hub.script_gps_fix(GpsFix(lat=38.05, lon=-85.0, accuracy_m=2.0, timestamp=0.0))
+    runtime.tick()  # seeds position_fusion
+
+    def _boom():
+        raise RuntimeError("esp32 link dropped")
+
+    runtime.esp32_link.status = _boom
+    runtime._last_telemetry_sample_monotonic = 0.0  # force a sample this tick
+    runtime.tick()  # must not raise
+
+    lcd = _FakeLcdWriter()
+    display = StatusDisplay(lcd=lcd)
+    for _ in range(3):  # cycle position -> mission -> obstacles -> drive
+        display.next_screen()
+    display.refresh(runtime.last_telemetry_readings)
+
+    assert lcd.writes[0][1] == "LINK?"

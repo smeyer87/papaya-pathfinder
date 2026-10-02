@@ -95,3 +95,23 @@ def test_default_screens_render_without_raising_on_an_empty_state():
         line1, line2 = screen.render({})
         assert isinstance(line1, str)
         assert isinstance(line2, str)
+
+
+def test_drive_screen_shows_link_unknown_when_halted_on_contact_is_absent():
+    from papaya_mission.status_display import DEFAULT_SCREENS
+
+    drive_screen = next(s for s in DEFAULT_SCREENS if s.name == "drive")
+
+    _line1, line2 = drive_screen.render({})
+
+    assert line2 == "LINK?"
+
+
+def test_drive_screen_still_shows_running_for_an_explicit_false():
+    from papaya_mission.status_display import DEFAULT_SCREENS
+
+    drive_screen = next(s for s in DEFAULT_SCREENS if s.name == "drive")
+
+    _line1, line2 = drive_screen.render({"halted_on_contact": False})
+
+    assert line2 == "running"
